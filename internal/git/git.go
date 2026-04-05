@@ -1,0 +1,294 @@
+package git
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Git defines the interface for git operations.
+type Git interface {
+	GetRepoInfo(ctx context.Context, path string) (RepoInfo, error)
+	DetectDefaultBranch(ctx context.Context, path string) string
+	GetBranch(ctx context.Context, path string) (string, error)
+	GetRemote(ctx context.Context, path string) (string, error)
+	GetAheadBehind(ctx context.Context, path, branch string) (int, int, error)
+	GetChanges(ctx context.Context, path string) ([]ChangeInfo, error)
+	GetLog(ctx context.Context, path string, n int) ([]CommitInfo, error)
+	Fetch(ctx context.Context, path string) error
+	Pull(ctx context.Context, path string) (string, error)
+	Push(ctx context.Context, path string) (string, error)
+	RunCommand(ctx context.Context, path string, args ...string) (string, error)
+	SwitchBranch(ctx context.Context, path, branch string) (string, error)
+	RunShellCommand(ctx context.Context, dir string, name string, args ...string) (string, error)
+}
+
+// ExecGit implements Git using os/exec.
+type ExecGit struct{}
+
+func NewExecGit() *ExecGit {
+	return &ExecGit{}
+}
+
+func (g *ExecGit) run(ctx context.Context, path string, args ...string) (string, error) {
+	allArgs := append([]string{"-C", path}, args...)
+	cmd := exec.CommandContext(ctx, "git", allArgs...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
+	// Fast path: read symref file directly (avoids spawning git)
+	if data, err := os.ReadFile(filepath.Join(path, ".git", "refs", "remotes", "origin", "HEAD")); err == nil {
+		ref := strings.TrimSpace(string(data))
+		const prefix = "ref: refs/remotes/origin/"
+		if strings.HasPrefix(ref, prefix) {
+			return ref[len(prefix):]
+		}
+	}
+
+	// Fallback: git symbolic-ref (handles packed refs)
+	out, err := g.run(ctx, path, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err == nil {
+		parts := strings.Split(out, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+
+	// Check common branch names via filesystem first
+	for _, name := range []string{"main", "master"} {
+		if _, err := os.Stat(filepath.Join(path, ".git", "refs", "heads", name)); err == nil {
+			return name
+		}
+	}
+
+	return "main"
+}
+
+func (g *ExecGit) GetBranch(ctx context.Context, path string) (string, error) {
+	return g.run(ctx, path, "rev-parse", "--abbrev-ref", "HEAD")
+}
+
+func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
+	out, err := g.run(ctx, path, "remote", "get-url", "origin")
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int, int, error) {
+	upstream := "origin/" + branch
+	out, err := g.run(ctx, path, "rev-list", "--left-right", "--count", branch+"..."+upstream)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	parts := strings.Fields(out)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unexpected rev-list output: %q", out)
+	}
+
+	ahead, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	behind, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return ahead, behind, nil
+}
+
+func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, error) {
+	out, err := g.run(ctx, path, "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+
+	var changes []ChangeInfo
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 3 {
+			continue
+		}
+		changes = append(changes, ChangeInfo{
+			Staged:   line[0],
+			Unstaged: line[1],
+			Path:     strings.TrimSpace(line[3:]),
+		})
+	}
+	return changes, nil
+}
+
+func (g *ExecGit) GetRepoInfo(ctx context.Context, path string) (RepoInfo, error) {
+	name := pathBaseName(path)
+	info := RepoInfo{
+		Name: name,
+		Path: path,
+	}
+
+	// Single command replaces GetBranch + GetAheadBehind + GetChanges
+	si, err := g.getStatusInfo(ctx, path)
+	if err != nil {
+		info.Status = StatusError
+		info.Error = fmt.Errorf("get status: %w", err)
+		return info, nil
+	}
+	info.Branch = si.branch
+	info.Ahead = si.ahead
+	info.Behind = si.behind
+	info.Changes = si.changes
+
+	info.DefaultBranch = g.DetectDefaultBranch(ctx, path)
+
+	info.Status = computeStatus(info)
+	return info, nil
+}
+
+// getStatusInfo runs a single git command to get branch, ahead/behind, and change count.
+func (g *ExecGit) getStatusInfo(ctx context.Context, path string) (struct {
+	branch  string
+	ahead   int
+	behind  int
+	changes int
+}, error) {
+	type result struct {
+		branch  string
+		ahead   int
+		behind  int
+		changes int
+	}
+
+	out, err := g.run(ctx, path, "status", "--porcelain=v2", "--branch")
+	if err != nil {
+		return result{}, err
+	}
+
+	var r result
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "# branch.head "):
+			r.branch = line[len("# branch.head "):]
+		case strings.HasPrefix(line, "# branch.ab "):
+			// Format: # branch.ab +N -M
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				r.ahead, _ = strconv.Atoi(parts[2][1:])  // skip '+'
+				r.behind, _ = strconv.Atoi(parts[3][1:]) // skip '-'
+			}
+		case line[0] != '#':
+			r.changes++
+		}
+	}
+
+	return r, nil
+}
+
+func (g *ExecGit) GetLog(ctx context.Context, path string, n int) ([]CommitInfo, error) {
+	format := "%H%n%h%n%an%n%aI%n%s"
+	out, err := g.run(ctx, path, "log", fmt.Sprintf("-%d", n), fmt.Sprintf("--format=%s", format))
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+
+	lines := strings.Split(out, "\n")
+	var commits []CommitInfo
+	for i := 0; i+4 < len(lines); i += 5 {
+		date, _ := time.Parse(time.RFC3339, lines[i+3])
+		commits = append(commits, CommitInfo{
+			Hash:    lines[i],
+			Short:   lines[i+1],
+			Author:  lines[i+2],
+			Date:    date,
+			Subject: lines[i+4],
+		})
+	}
+	return commits, nil
+}
+
+func (g *ExecGit) Fetch(ctx context.Context, path string) error {
+	_, err := g.run(ctx, path, "fetch", "--prune")
+	return err
+}
+
+func (g *ExecGit) Pull(ctx context.Context, path string) (string, error) {
+	return g.run(ctx, path, "pull")
+}
+
+func (g *ExecGit) Push(ctx context.Context, path string) (string, error) {
+	return g.run(ctx, path, "push")
+}
+
+func (g *ExecGit) RunCommand(ctx context.Context, path string, args ...string) (string, error) {
+	return g.run(ctx, path, args...)
+}
+
+func (g *ExecGit) SwitchBranch(ctx context.Context, path, branch string) (string, error) {
+	return g.run(ctx, path, "switch", branch)
+}
+
+func (g *ExecGit) RunShellCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func computeStatus(info RepoInfo) RepoStatus {
+	if info.Branch != info.DefaultBranch {
+		return StatusNonDefault
+	}
+	if info.Ahead > 0 && info.Behind > 0 {
+		return StatusDiverged
+	}
+	if info.Ahead > 0 {
+		return StatusAhead
+	}
+	if info.Behind > 0 {
+		return StatusBehind
+	}
+	if info.Changes > 0 {
+		return StatusDirty
+	}
+	return StatusUpToDate
+}
+
+func pathBaseName(path string) string {
+	// Trim trailing slashes then find last component
+	path = strings.TrimRight(path, "/\\")
+	if i := strings.LastIndexAny(path, "/\\"); i >= 0 {
+		return path[i+1:]
+	}
+	return path
+}
