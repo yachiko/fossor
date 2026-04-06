@@ -70,6 +70,10 @@ func (m *Model) View() string {
 
 // viewStatus renders the Status tab (file panels + actions).
 func (m *Model) viewStatus() string {
+	if m.mode == modeCommit {
+		return m.viewCommit()
+	}
+
 	var top, bottom strings.Builder
 	sep := strings.Repeat("─", m.width-4)
 
@@ -187,6 +191,51 @@ func (m *Model) viewStatus() string {
 	top.WriteString("\n  " + sep + "\n")
 
 	return top.String() + bottomStr
+}
+
+// viewCommit renders the inline commit message editor with staged diff.
+func (m *Model) viewCommit() string {
+	var b strings.Builder
+	sep := strings.Repeat("─", m.width-4)
+
+	b.WriteString("  " + sep + "\n")
+	b.WriteString("  " + catHeaderStyle.Render("Commit message") + "\n")
+	m.commitInput.SetWidth(m.width - 6)
+	for _, line := range strings.Split(m.commitInput.View(), "\n") {
+		b.WriteString("  " + line + "\n")
+	}
+	b.WriteString("  " + sep + "\n")
+
+	// Staged diff below
+	// header(3) + sep(1) + label(1) + textarea(~7) + sep(1) + "Staged"(1) + sep(1) + statusbar(2)
+	taHeight := m.commitInput.Height() + 2 // rendered lines + border
+	diffHeight := m.height - 9 - taHeight
+	if diffHeight < 3 {
+		diffHeight = 3
+	}
+	m.commitDiffView.Width = m.width - 8
+	m.commitDiffView.Height = diffHeight
+
+	// Staged files header
+	stagedFiles := m.stagedFilesList()
+	b.WriteString("  " + catHeaderStyle.Render("Staged") + "  " + disabledStyle.Render(stagedFiles) + "\n")
+
+	for _, line := range strings.Split(m.commitDiffView.View(), "\n") {
+		b.WriteString("  " + line + "\n")
+	}
+
+	b.WriteString("  " + sep + "\n")
+
+	// Pad
+	lines := strings.Count(b.String(), "\n")
+	for i := lines; i < m.height-5; i++ {
+		b.WriteString("\n")
+	}
+
+	helpPairs := []string{"ctrl+d", "commit", "pgup/dn", "scroll diff", "esc", "cancel"}
+	b.WriteString(components.StatusBar(m.width, helpPairs, m.statusMsg))
+
+	return b.String()
 }
 
 // viewHistory renders the History tab (scrollable commit log).
@@ -365,6 +414,8 @@ var (
 	diffCtxStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#a0a0a0"))
 )
 
+var diffFileStyle = lipgloss.NewStyle().Bold(true).Foreground(common.ColorAccent).Underline(true)
+
 func colorizeDiff(raw string) string {
 	if raw == "" {
 		return ""
@@ -374,8 +425,16 @@ func colorizeDiff(raw string) string {
 	var oldLine, newLine int
 
 	for _, line := range lines {
-		if strings.HasPrefix(line, "diff --git") ||
-			strings.HasPrefix(line, "index ") ||
+		// Extract file path from diff header
+		if strings.HasPrefix(line, "diff --git") {
+			// "diff --git a/path b/path" → extract "path"
+			parts := strings.SplitN(line, " b/", 2)
+			if len(parts) == 2 {
+				b.WriteString("\n" + diffFileStyle.Render(parts[1]) + "\n")
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "index ") ||
 			strings.HasPrefix(line, "--- ") ||
 			strings.HasPrefix(line, "+++ ") ||
 			strings.HasPrefix(line, "new file") ||
@@ -434,6 +493,19 @@ func parseHunkHeader(line string) (oldStart, newStart int) {
 		}
 	}
 	return
+}
+
+func (m *Model) stagedFilesList() string {
+	var paths []string
+	for _, c := range m.changes {
+		if c.Staged != ' ' && c.Staged != 0 && c.Staged != '?' {
+			paths = append(paths, c.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return "(no staged files)"
+	}
+	return strings.Join(paths, ", ")
 }
 
 func fileChangeIndicator(c git.ChangeInfo) string {

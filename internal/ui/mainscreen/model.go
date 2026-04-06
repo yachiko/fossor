@@ -212,12 +212,12 @@ func (m *Model) cycleFilter() {
 		counts[r.Status]++
 	}
 
-	// Filter modes in cycle order, mapped to their required status.
+	// Cycle order: status filters that have repos, then All.
 	type entry struct {
 		mode   FilterMode
 		status git.RepoStatus
 	}
-	order := []entry{
+	statusOrder := []entry{
 		{FilterError, git.StatusError},
 		{FilterNonDefault, git.StatusNonDefault},
 		{FilterDiverged, git.StatusDiverged},
@@ -227,18 +227,19 @@ func (m *Model) cycleFilter() {
 		{FilterUpToDate, git.StatusUpToDate},
 	}
 
-	// Find current position in order, then scan forward for next non-empty.
-	start := 0
-	for i, e := range order {
-		if e.mode == m.filterMode {
-			start = i + 1
-			break
+	// Build the active cycle: non-empty statuses + All at the end
+	var cycle []FilterMode
+	for _, e := range statusOrder {
+		if counts[e.status] > 0 {
+			cycle = append(cycle, e.mode)
 		}
 	}
-	for i := 0; i < len(order); i++ {
-		e := order[(start+i)%len(order)]
-		if counts[e.status] > 0 {
-			m.filterMode = e.mode
+	cycle = append(cycle, FilterAll)
+
+	// Find current position and advance to next
+	for i, fm := range cycle {
+		if fm == m.filterMode {
+			m.filterMode = cycle[(i+1)%len(cycle)]
 			return
 		}
 	}

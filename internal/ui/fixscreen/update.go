@@ -15,6 +15,8 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		return m.updateConfirm(msg)
 	case modeInput:
 		return m.updateInput(msg)
+	case modeCommit:
+		return m.updateCommit(msg)
 	default:
 		return m.updateNormal(msg)
 	}
@@ -71,6 +73,10 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.stashDiffLoaded = true
 		m.stashDiffView.SetContent(colorizeDiff(msg.diff))
 		m.stashDiffView.GotoTop()
+		return true, nil
+	case stagedDiffLoadedMsg:
+		m.commitDiffView.SetContent(colorizeDiff(msg.diff))
+		m.commitDiffView.GotoTop()
 		return true, nil
 	}
 	return false, nil
@@ -168,13 +174,22 @@ func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	// Inline commit mode
+	if key == "c" && m.Repo.Changes > 0 {
+		m.mode = modeCommit
+		m.commitInput.Reset()
+		m.commitInput.SetWidth(m.width - 8)
+		m.commitInput.Focus()
+		return m.loadStagedDiff()
+	}
+
 	// Action dispatch
 	idx, ok := m.keyMap[key]
 	if !ok {
 		return nil
 	}
 	action := m.actions[idx]
-	if !action.Enabled(m.Repo) {
+	if !action.Enabled(m.Repo) || action.BuildCmd == nil {
 		return nil
 	}
 
@@ -278,6 +293,42 @@ func (m *Model) moveStashCursor(delta int) tea.Cmd {
 		return m.loadStashDiff(m.stashCursor)
 	}
 	return nil
+}
+
+func (m *Model) updateCommit(msg tea.Msg) tea.Cmd {
+	kmsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		var cmd tea.Cmd
+		m.commitInput, cmd = m.commitInput.Update(msg)
+		return cmd
+	}
+
+	switch kmsg.String() {
+	case "esc":
+		m.mode = modeNormal
+		m.commitInput.Blur()
+		return nil
+	case "ctrl+d":
+		message := strings.TrimSpace(m.commitInput.Value())
+		if message == "" {
+			m.statusMsg = "commit: empty message"
+			return nil
+		}
+		m.mode = modeNormal
+		m.commitInput.Blur()
+		cmd := gitCmd(m.Repo.Path, "commit", "-m", message)
+		return tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return execFinishedMsg{action: "commit", err: err}
+		})
+	case "pgup", "pgdown":
+		var cmd tea.Cmd
+		m.commitDiffView, cmd = m.commitDiffView.Update(kmsg)
+		return cmd
+	}
+
+	var cmd tea.Cmd
+	m.commitInput, cmd = m.commitInput.Update(msg)
+	return cmd
 }
 
 func (m *Model) updateConfirm(msg tea.Msg) tea.Cmd {

@@ -156,6 +156,13 @@ func AllActions() []Action {
 			Name:     "commit",
 			Category: CatChanges,
 			Enabled:  func(r git.RepoInfo) bool { return r.Changes > 0 },
+			BuildCmd: nil, // handled specially — opens inline commit mode
+		},
+		{
+			Key:      "C",
+			Name:     "commit (editor)",
+			Category: CatChanges,
+			Enabled:  func(r git.RepoInfo) bool { return r.Changes > 0 },
 			BuildCmd: func(r git.RepoInfo, _ string) *exec.Cmd {
 				return gitCmd(r.Path, "commit")
 			},

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,6 +31,7 @@ const (
 	modeNormal  mode = iota
 	modeConfirm
 	modeInput
+	modeCommit // inline commit message editor
 )
 
 // Model is the manage screen model.
@@ -59,6 +61,10 @@ type Model struct {
 	lastOutput string
 	lastErr    error
 	stashInfo  string
+
+	// Commit mode
+	commitInput    textarea.Model
+	commitDiffView viewport.Model
 
 	// History tab
 	commits       []git.CommitInfo
@@ -113,6 +119,10 @@ type stashDiffLoadedMsg struct {
 	diff string
 }
 
+type stagedDiffLoadedMsg struct {
+	diff string
+}
+
 // New creates a new manage screen model.
 func New(g git.Git, repo git.RepoInfo) Model {
 	actions := AllActions()
@@ -124,15 +134,22 @@ func New(g git.Git, repo git.RepoInfo) Model {
 	ti := textinput.New()
 	ti.CharLimit = 120
 
+	ci := textarea.New()
+	ci.Placeholder = "Commit message..."
+	ci.CharLimit = 0
+	ci.SetHeight(5)
+
 	return Model{
-		Repo:          repo,
-		Git:           g,
-		actions:       actions,
-		keyMap:        km,
-		textInput:     ti,
-		diffView:      viewport.New(80, 10),
-		commitsView:   viewport.New(80, 20),
-		stashDiffView: viewport.New(80, 10),
+		Repo:           repo,
+		Git:            g,
+		actions:        actions,
+		keyMap:         km,
+		textInput:      ti,
+		commitInput:    ci,
+		diffView:       viewport.New(80, 10),
+		commitsView:    viewport.New(80, 20),
+		stashDiffView:  viewport.New(80, 10),
+		commitDiffView: viewport.New(80, 10),
 	}
 }
 
@@ -217,6 +234,15 @@ func (m *Model) loadStashDiff(index int) tea.Cmd {
 		cmd := exec.Command("git", "-C", repoPath, "stash", "show", "-p", ref)
 		out, _ := cmd.Output()
 		return stashDiffLoadedMsg{diff: string(out)}
+	}
+}
+
+func (m *Model) loadStagedDiff() tea.Cmd {
+	repoPath := m.Repo.Path
+	return func() tea.Msg {
+		cmd := exec.Command("git", "-C", repoPath, "diff", "--cached")
+		out, _ := cmd.Output()
+		return stagedDiffLoadedMsg{diff: string(out)}
 	}
 }
 
