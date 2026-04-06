@@ -1,2 +1,4 @@
 specs/**
+testdata/remotes/**
+testdata/repos/**
 fossor
