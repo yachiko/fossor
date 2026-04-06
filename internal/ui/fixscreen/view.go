@@ -388,7 +388,7 @@ func (m *Model) viewBranches() string {
 	// Separator + table header
 	b.WriteString("  " + sep + "\n")
 	hdrStyle := lipgloss.NewStyle().Bold(true).Foreground(common.ColorMuted)
-	b.WriteString(hdrStyle.Render(fmt.Sprintf("  %-*s %*s %*s %-*s %-*s %s",
+	b.WriteString(hdrStyle.Render(fmt.Sprintf("  %-*s %-*s %-*s %-*s %-*s %s",
 		colName, "Branch",
 		colAhead, "Ahead",
 		colBehind, "Behind",
