@@ -17,13 +17,14 @@ import (
 )
 
 const (
-	TabStatus  = 0
-	TabHistory = 1
-	TabStash   = 2
-	NumTabs    = 3
+	TabStatus   = 0
+	TabHistory  = 1
+	TabStash    = 2
+	TabBranches = 3
+	NumTabs     = 4
 )
 
-var tabNames = [NumTabs]string{"Status", "History", "Stash"}
+var tabNames = [NumTabs]string{"Status", "History", "Stash", "Branches"}
 
 type mode int
 
@@ -78,9 +79,29 @@ type Model struct {
 	stashDiffView   viewport.Model
 	stashDiffLoaded bool
 
+	// Branches tab
+	branches          []branchInfo
+	branchesLoaded    bool
+	branchCursor      int
+	branchScroll      int
+	branchInputMode   bool   // true when entering new branch name or rename
+	branchInputAction string // "create" or "rename"
+	branchInput       textinput.Model
+
 	width     int
 	height    int
 	statusMsg string
+}
+
+// branchInfo holds info about a local branch.
+type branchInfo struct {
+	Name      string
+	IsCurrent bool
+	Merged    bool   // fully merged into default branch
+	LastDate  string // formatted date of last commit
+	LastMsg   string // subject of last commit
+	Ahead     int    // commits ahead of default branch
+	Behind    int    // commits behind default branch
 }
 
 // Internal messages
@@ -123,6 +144,12 @@ type stagedDiffLoadedMsg struct {
 	diff string
 }
 
+type branchesLoadedMsg struct {
+	branches []branchInfo
+}
+
+
+
 // New creates a new manage screen model.
 func New(g git.Git, repo git.RepoInfo) Model {
 	actions := AllActions()
@@ -139,13 +166,18 @@ func New(g git.Git, repo git.RepoInfo) Model {
 	ci.CharLimit = 0
 	ci.SetHeight(5)
 
+	bi := textinput.New()
+	bi.Placeholder = "Branch name..."
+	bi.CharLimit = 100
+
 	return Model{
 		Repo:           repo,
 		Git:            g,
 		actions:        actions,
 		keyMap:         km,
 		textInput:      ti,
-		commitInput:    ci,
+		commitInput:      ci,
+		branchInput:    bi,
 		diffView:       viewport.New(80, 10),
 		commitsView:    viewport.New(80, 20),
 		stashDiffView:  viewport.New(80, 10),
@@ -234,6 +266,58 @@ func (m *Model) loadStashDiff(index int) tea.Cmd {
 		cmd := exec.Command("git", "-C", repoPath, "stash", "show", "-p", ref)
 		out, _ := cmd.Output()
 		return stashDiffLoadedMsg{diff: string(out)}
+	}
+}
+
+func (m *Model) loadBranches() tea.Cmd {
+	repoPath := m.Repo.Path
+	defaultBranch := m.Repo.DefaultBranch
+	return func() tea.Msg {
+		cmd := exec.Command("git", "-C", repoPath, "for-each-ref",
+			"--sort=-committerdate",
+			"--format=%(refname:short)\t%(HEAD)\t%(committerdate:short)\t%(subject)",
+			"refs/heads/")
+		out, _ := cmd.Output()
+
+		// Get merged branches
+		mergedCmd := exec.Command("git", "-C", repoPath, "branch", "--merged", defaultBranch)
+		mergedOut, _ := mergedCmd.Output()
+		mergedSet := make(map[string]bool)
+		for _, line := range strings.Split(strings.TrimSpace(string(mergedOut)), "\n") {
+			name := strings.TrimSpace(strings.TrimPrefix(line, "*"))
+			if name != "" {
+				mergedSet[name] = true
+			}
+		}
+
+		var branches []branchInfo
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line == "" {
+				continue
+			}
+			parts := strings.SplitN(line, "\t", 4)
+			if len(parts) < 4 {
+				continue
+			}
+			bi := branchInfo{
+				Name:      parts[0],
+				IsCurrent: parts[1] == "*",
+				LastDate:  parts[2],
+				LastMsg:   parts[3],
+				Merged:    mergedSet[parts[0]],
+			}
+			// Compute ahead/behind relative to default branch
+			if bi.Name != defaultBranch {
+				revCmd := exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count",
+					defaultBranch+"..."+bi.Name)
+				revOut, err := revCmd.Output()
+				if err == nil {
+					fmt.Sscanf(strings.TrimSpace(string(revOut)), "%d\t%d", &bi.Behind, &bi.Ahead)
+				}
+			}
+			branches = append(branches, bi)
+		}
+		return branchesLoadedMsg{branches: branches}
 	}
 }
 

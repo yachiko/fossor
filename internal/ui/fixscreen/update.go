@@ -2,6 +2,7 @@ package fixscreen
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,7 +34,11 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		} else {
 			m.lastOutput = ""
 		}
-		return true, tea.Batch(m.refreshRepo(), m.refreshStash(), m.loadChanges())
+		cmds := []tea.Cmd{m.refreshRepo(), m.refreshStash(), m.loadChanges()}
+		if m.branchesLoaded {
+			cmds = append(cmds, m.loadBranches())
+		}
+		return true, tea.Batch(cmds...)
 	case stashInfoMsg:
 		m.stashInfo = msg.info
 		m.stashEntries = parseStashEntries(msg.info)
@@ -74,6 +79,13 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.stashDiffView.SetContent(colorizeDiff(msg.diff))
 		m.stashDiffView.GotoTop()
 		return true, nil
+	case branchesLoadedMsg:
+		m.branches = msg.branches
+		m.branchesLoaded = true
+		if m.branchCursor >= len(m.branches) {
+			m.branchCursor = max(0, len(m.branches)-1)
+		}
+		return true, nil
 	case stagedDiffLoadedMsg:
 		m.commitDiffView.SetContent(colorizeDiff(msg.diff))
 		m.commitDiffView.GotoTop()
@@ -111,6 +123,8 @@ func (m *Model) updateNormal(msg tea.Msg) tea.Cmd {
 			return m.switchTab(TabHistory)
 		case "3":
 			return m.switchTab(TabStash)
+		case "4":
+			return m.switchTab(TabBranches)
 		}
 	}
 
@@ -122,6 +136,8 @@ func (m *Model) updateNormal(msg tea.Msg) tea.Cmd {
 		return m.updateHistory(kmsg)
 	case TabStash:
 		return m.updateStash(kmsg)
+	case TabBranches:
+		return m.updateBranches(kmsg)
 	}
 	return nil
 }
@@ -136,6 +152,10 @@ func (m *Model) switchTab(tab int) tea.Cmd {
 	case TabStash:
 		if len(m.stashEntries) > 0 && !m.stashDiffLoaded {
 			return m.loadStashDiff(m.stashCursor)
+		}
+	case TabBranches:
+		if !m.branchesLoaded {
+			return m.loadBranches()
 		}
 	}
 	return nil
@@ -255,6 +275,114 @@ func (m *Model) updateStash(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// Branches tab: navigation + actions
+func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
+	// Branch input mode (create/rename)
+	if m.branchInputMode {
+		switch msg.String() {
+		case "esc":
+			m.branchInputMode = false
+			m.branchInput.Blur()
+			return nil
+		case "enter":
+			name := strings.TrimSpace(m.branchInput.Value())
+			if name == "" {
+				return nil
+			}
+			m.branchInputMode = false
+			m.branchInput.Blur()
+
+			var cmd *exec.Cmd
+			var action string
+			if m.branchInputAction == "create" {
+				cmd = gitCmd(m.Repo.Path, "branch", name)
+				action = "create branch " + name
+			} else if m.branchInputAction == "rename" && len(m.branches) > 0 {
+				old := m.branches[m.branchCursor].Name
+				cmd = gitCmd(m.Repo.Path, "branch", "-m", old, name)
+				action = "rename " + old + " → " + name
+			}
+			if cmd != nil {
+				return tea.ExecProcess(cmd, func(err error) tea.Msg {
+					return execFinishedMsg{action: action, err: err}
+				})
+			}
+			return nil
+		}
+		var c tea.Cmd
+		m.branchInput, c = m.branchInput.Update(msg)
+		return c
+	}
+
+	switch msg.String() {
+	case "up":
+		m.moveBranchCursor(-1)
+		return nil
+	case "down":
+		m.moveBranchCursor(1)
+		return nil
+	case "enter", "s":
+		// Switch to selected branch
+		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
+			name := m.branches[m.branchCursor].Name
+			cmd := gitCmd(m.Repo.Path, "switch", name)
+			return tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return execFinishedMsg{action: "switch " + name, err: err}
+			})
+		}
+	case "n":
+		// Create new branch
+		m.branchInputMode = true
+		m.branchInputAction = "create"
+		m.branchInput.Placeholder = "New branch name..."
+		m.branchInput.SetValue("")
+		m.branchInput.Focus()
+		return m.branchInput.Cursor.BlinkCmd()
+	case "r":
+		// Rename selected branch
+		if len(m.branches) > 0 {
+			m.branchInputMode = true
+			m.branchInputAction = "rename"
+			m.branchInput.Placeholder = "New name for " + m.branches[m.branchCursor].Name + "..."
+			m.branchInput.SetValue("")
+			m.branchInput.Focus()
+			return m.branchInput.Cursor.BlinkCmd()
+		}
+	case "d":
+		// Delete branch (safe — fails on unmerged)
+		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
+			name := m.branches[m.branchCursor].Name
+			cmd := gitCmd(m.Repo.Path, "branch", "-d", name)
+			return tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return execFinishedMsg{action: "delete " + name, err: err}
+			})
+		}
+	case "D":
+		// Force delete branch
+		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
+			name := m.branches[m.branchCursor].Name
+			cmd := gitCmd(m.Repo.Path, "branch", "-D", name)
+			return tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return execFinishedMsg{action: "force delete " + name, err: err}
+			})
+		}
+	}
+	return nil
+}
+
+func (m *Model) moveBranchCursor(delta int) {
+	if len(m.branches) == 0 {
+		return
+	}
+	m.branchCursor += delta
+	if m.branchCursor < 0 {
+		m.branchCursor = 0
+	}
+	if m.branchCursor >= len(m.branches) {
+		m.branchCursor = len(m.branches) - 1
+	}
 }
 
 func (m *Model) moveFileCursor(delta int) tea.Cmd {

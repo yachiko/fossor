@@ -63,6 +63,8 @@ func (m *Model) View() string {
 		b.WriteString(m.viewHistory())
 	case TabStash:
 		b.WriteString(m.viewStash())
+	case TabBranches:
+		b.WriteString(m.viewBranches())
 	}
 
 	return b.String()
@@ -367,6 +369,149 @@ func (m *Model) viewStash() string {
 	return b.String()
 }
 
+// viewBranches renders the Branches tab as a table.
+func (m *Model) viewBranches() string {
+	var b strings.Builder
+	sep := strings.Repeat("─", m.width-4)
+
+	// Column widths
+	colName := 50
+	colAhead := 7
+	colBehind := 7
+	colMerged := 8
+	colDate := 12
+	colMsg := m.width - colName - colAhead - colBehind - colMerged - colDate - 8
+	if colMsg < 10 {
+		colMsg = 10
+	}
+
+	// Table header
+	hdrStyle := lipgloss.NewStyle().Bold(true).Foreground(common.ColorMuted)
+	b.WriteString(hdrStyle.Render(fmt.Sprintf("  %-*s %*s %*s %-*s %-*s %s",
+		colName, "Branch",
+		colAhead, "Ahead",
+		colBehind, "Behind",
+		colMerged, "Merged",
+		colDate, "Date",
+		"Message",
+	)) + "\n")
+	b.WriteString("  " + sep + "\n")
+
+	// Rows
+	// header(3: name+info+tabs) + table_header(1) + sep(2) + input(0-1) + statusbar(2)
+	tableHeight := m.height - 8
+	if m.branchInputMode {
+		tableHeight--
+	}
+	if tableHeight < 1 {
+		tableHeight = 1
+	}
+
+	if !m.branchesLoaded {
+		b.WriteString(disabledStyle.Render("  loading...") + "\n")
+	} else if len(m.branches) == 0 {
+		b.WriteString(disabledStyle.Render("  (no branches)") + "\n")
+	} else {
+		if m.branchCursor < m.branchScroll {
+			m.branchScroll = m.branchCursor
+		}
+		if m.branchCursor >= m.branchScroll+tableHeight {
+			m.branchScroll = m.branchCursor - tableHeight + 1
+		}
+		end := m.branchScroll + tableHeight
+		if end > len(m.branches) {
+			end = len(m.branches)
+		}
+		for i := m.branchScroll; i < end; i++ {
+			br := m.branches[i]
+
+			// Build row with manual padding to avoid ANSI alignment issues
+			var row strings.Builder
+			if i == m.branchCursor {
+				row.WriteString("> ")
+			} else {
+				row.WriteString("  ")
+			}
+
+			// Name column
+			name := truncate(br.Name, colName)
+			if br.IsCurrent {
+				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorGreen).Bold(true).Render(name))
+			} else {
+				row.WriteString(name)
+			}
+			padCol(&row, colName, len(name))
+
+			// Ahead column
+			if br.Ahead > 0 {
+				aStr := fmt.Sprintf("%d↑", br.Ahead)
+				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorGreen).Render(aStr))
+				padCol(&row, colAhead, lipgloss.Width(aStr))
+			} else {
+				padCol(&row, colAhead, 0)
+			}
+
+			// Behind column
+			if br.Behind > 0 {
+				bStr := fmt.Sprintf("%d↓", br.Behind)
+				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorRed).Render(bStr))
+				padCol(&row, colBehind, lipgloss.Width(bStr))
+			} else {
+				padCol(&row, colBehind, 0)
+			}
+
+			// Merged column
+			if br.Merged && br.Name != m.Repo.DefaultBranch {
+				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorGreen).Render("✓"))
+				padCol(&row, colMerged, 1)
+			} else {
+				padCol(&row, colMerged, 0)
+			}
+
+			// Date column
+			row.WriteString(disabledStyle.Render(fmt.Sprintf("%-*s", colDate, br.LastDate)) + " ")
+
+			// Message column
+			row.WriteString(disabledStyle.Render(truncate(br.LastMsg, colMsg)))
+
+			rowStr := row.String()
+			if i == m.branchCursor {
+				b.WriteString(lipgloss.NewStyle().Background(common.ColorSurface).Width(m.width).Render(rowStr) + "\n")
+			} else {
+				b.WriteString(rowStr + "\n")
+			}
+		}
+	}
+
+	// Pad rows
+	written := strings.Count(b.String(), "\n") - 2 // minus header + sep
+	for i := written; i < tableHeight; i++ {
+		b.WriteString("\n")
+	}
+
+	b.WriteString("  " + sep + "\n")
+
+	// Branch input
+	if m.branchInputMode {
+		label := "New branch"
+		if m.branchInputAction == "rename" {
+			label = "Rename to"
+		}
+		b.WriteString("  " + catHeaderStyle.Render(label) + "  " + m.branchInput.View() + "\n")
+	}
+
+	// Pad to bottom
+	lines := strings.Count(b.String(), "\n")
+	for i := lines; i < m.height-5; i++ {
+		b.WriteString("\n")
+	}
+
+	helpPairs := []string{"↑↓", "select", "↵/s", "switch", "n", "new", "r", "rename", "d", "delete", "D", "force del", "tab", "switch tab", "esc", "back", "q", "quit"}
+	b.WriteString(components.StatusBar(m.width, helpPairs, m.statusMsg))
+
+	return b.String()
+}
+
 func (m *Model) renderActionGrid() string {
 	var b strings.Builder
 	categories := AllCategories()
@@ -542,6 +687,15 @@ func fileChangeIndicator(c git.ChangeInfo) string {
 		u = unstaged.Render(u)
 	}
 	return s + u
+}
+
+// padCol writes spaces to fill a column to its target width.
+func padCol(b *strings.Builder, colWidth, contentWidth int) {
+	pad := colWidth - contentWidth + 1
+	if pad < 1 {
+		pad = 1
+	}
+	b.WriteString(strings.Repeat(" ", pad))
 }
 
 func truncate(s string, maxLen int) string {
