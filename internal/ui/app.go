@@ -11,7 +11,7 @@ import (
 
 	"github.com/ahoma/fossor/internal/git"
 	"github.com/ahoma/fossor/internal/ui/common"
-	"github.com/ahoma/fossor/internal/ui/fixscreen"
+	"github.com/ahoma/fossor/internal/ui/manageview"
 	"github.com/ahoma/fossor/internal/ui/mainscreen"
 )
 
@@ -31,7 +31,7 @@ type App struct {
 
 	screen      screen
 	mainScreen  mainscreen.Model
-	manageModel *fixscreen.Model
+	manageModel *manageview.Model
 
 	discovering bool
 	discovered  int
@@ -103,7 +103,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.scheduleClearStatus()
 
 	case common.SwitchToManageMsg:
-		fm := fixscreen.New(a.git, msg.Repo)
+		fm := manageview.New(a.git, msg.Repo)
 		fm.SetSize(a.width, a.height)
 		a.manageModel = &fm
 		a.screen = screenManage

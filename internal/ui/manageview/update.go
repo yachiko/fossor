@@ -1,4 +1,4 @@
-package fixscreen
+package manageview
 
 import (
 	"fmt"
