@@ -352,16 +352,10 @@ func (m *Model) viewStash() string {
 		diffPanel.WriteString(m.stashDiffView.View())
 	}
 
-	leftCol := lipgloss.NewStyle().Width(listWidth).Render(strings.TrimRight(entryList.String(), "\n"))
-	rightCol := lipgloss.NewStyle().Width(diffWidth).Render(strings.TrimRight(diffPanel.String(), "\n"))
+	leftCol := lipgloss.NewStyle().Width(listWidth).Height(contentHeight).Render(strings.TrimRight(entryList.String(), "\n"))
+	rightCol := lipgloss.NewStyle().Width(diffWidth).Height(contentHeight).Render(strings.TrimRight(diffPanel.String(), "\n"))
 	b.WriteString("  " + lipgloss.JoinHorizontal(lipgloss.Top, leftCol, " ", rightCol))
 	b.WriteString("\n  " + sep + "\n")
-
-	// Pad
-	lines := strings.Count(b.String(), "\n")
-	for i := lines; i < m.height-5; i++ {
-		b.WriteString("\n")
-	}
 
 	helpPairs := []string{"↑↓", "entries", "pgup/dn", "diff", "p", "pop", "d", "drop", "tab", "switch", "esc", "back", "q", "quit"}
 	b.WriteString(components.StatusBar(m.width, helpPairs, m.statusMsg))
