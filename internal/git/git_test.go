@@ -199,21 +199,52 @@ func TestRunShellCommand(t *testing.T) {
 
 func TestComputeStatus(t *testing.T) {
 	tests := []struct {
+		name   string
 		info   RepoInfo
 		expect RepoStatus
 	}{
-		{RepoInfo{Branch: "main", DefaultBranch: "main"}, StatusUpToDate},
-		{RepoInfo{Branch: "main", DefaultBranch: "main", Ahead: 2}, StatusAhead},
-		{RepoInfo{Branch: "main", DefaultBranch: "main", Behind: 3}, StatusBehind},
-		{RepoInfo{Branch: "main", DefaultBranch: "main", Ahead: 1, Behind: 1}, StatusDiverged},
-		{RepoInfo{Branch: "feat", DefaultBranch: "main"}, StatusNonDefault},
-		{RepoInfo{Branch: "main", DefaultBranch: "main", Changes: 5}, StatusDirty},
+		{"up to date", RepoInfo{Branch: "main", DefaultBranch: "main"}, StatusUpToDate},
+		{"ahead", RepoInfo{Branch: "main", DefaultBranch: "main", Ahead: 2}, StatusAhead},
+		{"behind", RepoInfo{Branch: "main", DefaultBranch: "main", Behind: 3}, StatusBehind},
+		{"diverged", RepoInfo{Branch: "main", DefaultBranch: "main", Ahead: 1, Behind: 1}, StatusDiverged},
+		{"non-default branch", RepoInfo{Branch: "feat", DefaultBranch: "main"}, StatusNonDefault},
+		{"dirty", RepoInfo{Branch: "main", DefaultBranch: "main", Changes: 5}, StatusDirty},
+		{
+			"dirty + non-default returns non-default (checked first)",
+			RepoInfo{Branch: "feat", DefaultBranch: "main", Changes: 10},
+			StatusNonDefault,
+		},
 	}
 
 	for _, tt := range tests {
-		got := computeStatus(tt.info)
-		if got != tt.expect {
-			t.Errorf("computeStatus(%+v) = %s, want %s", tt.info, got, tt.expect)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeStatus(tt.info)
+			if got != tt.expect {
+				t.Errorf("computeStatus(%+v) = %s, want %s", tt.info, got, tt.expect)
+			}
+		})
+	}
+}
+
+func TestPathBaseName(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"simple path", "/foo/bar", "bar"},
+		{"trailing slash", "/foo/bar/", "bar"},
+		{"single component", "bar", "bar"},
+		{"root path child", "/baz", "baz"},
+		{"trailing backslash", `C:\foo\bar\`, "bar"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pathBaseName(tt.path)
+			if got != tt.want {
+				t.Errorf("pathBaseName(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
 	}
 }
