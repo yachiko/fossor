@@ -89,18 +89,27 @@ func (m *Model) View() string {
 	} else {
 		b.WriteString(left)
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Search bar
+	// Search + filter line (always reserved)
+	searchLeft := "  "
 	if m.searching || m.searchText.Value() != "" {
-		b.WriteString("  " + m.searchText.View() + "\n\n")
+		searchLeft += m.searchText.View()
 	}
-
-	// Filter label
+	filterRight := ""
 	if m.filterMode != FilterAll {
-		filterLabel := lipgloss.NewStyle().Foreground(common.ColorYellow).Render("[Filter: " + m.filterMode.String() + "]")
-		b.WriteString("  " + filterLabel + "\n")
+		filterRight = lipgloss.NewStyle().Foreground(common.ColorYellow).Render("[" + m.filterMode.String() + "]")
 	}
+	if filterRight != "" {
+		gap := m.width - lipgloss.Width(searchLeft) - lipgloss.Width(filterRight)
+		if gap < 1 {
+			gap = 1
+		}
+		b.WriteString(searchLeft + strings.Repeat(" ", gap) + filterRight)
+	} else {
+		b.WriteString(searchLeft)
+	}
+	b.WriteString("\n")
 
 	// Header
 	sortIndicator := func(col SortColumn) string {

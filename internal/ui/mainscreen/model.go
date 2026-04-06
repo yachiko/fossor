@@ -94,14 +94,8 @@ func (m *Model) SetStatus(msg string) {
 
 // TableHeight returns the number of visible table rows.
 func (m *Model) TableHeight() int {
-	// title(2) + header(1) + top_sep(1) + bottom_sep(1) + statusbar(2) + padding(1) = 8
+	// title(1) + blank(1) + search/filter(1) + header(1) + top_sep(1) + bottom_sep(1) + statusbar(2) = 8
 	h := m.height - 8
-	if m.searching || m.searchText.Value() != "" {
-		h -= 2
-	}
-	if m.filterMode != FilterAll {
-		h -= 1
-	}
 	if h < 1 {
 		h = 1
 	}
