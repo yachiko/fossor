@@ -28,7 +28,7 @@ func (m *Model) View() string {
 	var b strings.Builder
 
 	// Line 1: repo name
-	b.WriteString(common.TitleStyle.Render(m.Repo.Name))
+	b.WriteString(" " + common.TitleStyle.Render(m.Repo.Name))
 	b.WriteString("\n")
 
 	// Line 2: repo info
@@ -117,8 +117,8 @@ func (m *Model) viewStatus() string {
 	top.WriteString("  " + sep + "\n")
 
 	// Panel height: remaining space between header+sep and bottom
-	// header(3) + sep_top(1) + sep_bottom(1) = 5 fixed top chrome
-	panelHeight := m.height - 5 - bottomHeight
+	// header(3) + sep_top(1) + sep_bottom(1) + pad(1) = 6 fixed top chrome
+	panelHeight := m.height - 6 - bottomHeight
 	if panelHeight < 3 {
 		panelHeight = 3
 	}
@@ -247,8 +247,8 @@ func (m *Model) viewHistory() string {
 
 	b.WriteString("  " + sep + "\n")
 
-	// header(3: name+info+tabs) + sep(2) + statusbar(2)
-	contentHeight := m.height - 7
+	// header(3: name+info+tabs) + sep(2) + statusbar(2) + pad(1)
+	contentHeight := m.height - 8
 	if contentHeight < 3 {
 		contentHeight = 3
 	}
@@ -263,7 +263,7 @@ func (m *Model) viewHistory() string {
 
 	// Pad
 	lines := strings.Count(b.String(), "\n")
-	for i := lines; i < m.height-5; i++ {
+	for i := lines; i < m.height-6; i++ {
 		b.WriteString("\n")
 	}
 
@@ -282,7 +282,7 @@ func (m *Model) viewStash() string {
 
 	b.WriteString("  " + sep + "\n")
 
-	contentHeight := m.height - 7 // header(3: name+info+tabs) + sep(2) + statusbar(2)
+	contentHeight := m.height - 8 // header(3: name+info+tabs) + sep(2) + statusbar(2) + pad(1)
 	if contentHeight < 3 {
 		contentHeight = 3
 	}
@@ -359,7 +359,7 @@ func (m *Model) viewStash() string {
 
 	// Pad
 	lines := strings.Count(b.String(), "\n")
-	for i := lines; i < m.height-4; i++ {
+	for i := lines; i < m.height-5; i++ {
 		b.WriteString("\n")
 	}
 
@@ -385,7 +385,8 @@ func (m *Model) viewBranches() string {
 		colMsg = 10
 	}
 
-	// Table header
+	// Separator + table header
+	b.WriteString("  " + sep + "\n")
 	hdrStyle := lipgloss.NewStyle().Bold(true).Foreground(common.ColorMuted)
 	b.WriteString(hdrStyle.Render(fmt.Sprintf("  %-*s %*s %*s %-*s %-*s %s",
 		colName, "Branch",
@@ -395,11 +396,10 @@ func (m *Model) viewBranches() string {
 		colDate, "Date",
 		"Message",
 	)) + "\n")
-	b.WriteString("  " + sep + "\n")
 
 	// Rows
-	// header(3: name+info+tabs) + table_header(1) + sep(2) + input(0-1) + statusbar(2)
-	tableHeight := m.height - 8
+	// header(3: name+info+tabs) + sep(1) + table_header(1) + sep(1) + input(0-1) + statusbar(2) + pad(1)
+	tableHeight := m.height - 9
 	if m.branchInputMode {
 		tableHeight--
 	}
@@ -422,63 +422,57 @@ func (m *Model) viewBranches() string {
 		if end > len(m.branches) {
 			end = len(m.branches)
 		}
+		// Cell style: fixed width, ANSI-aware padding
+		nameCol := lipgloss.NewStyle().Width(colName + 1)
+		aheadCol := lipgloss.NewStyle().Width(colAhead + 1)
+		behindCol := lipgloss.NewStyle().Width(colBehind + 1)
+		mergedCol := lipgloss.NewStyle().Width(colMerged + 1)
+		dateCol := lipgloss.NewStyle().Width(colDate + 1)
+
 		for i := m.branchScroll; i < end; i++ {
 			br := m.branches[i]
 
-			// Build row with manual padding to avoid ANSI alignment issues
-			var row strings.Builder
+			prefix := "  "
 			if i == m.branchCursor {
-				row.WriteString("> ")
-			} else {
-				row.WriteString("  ")
+				prefix = "> "
 			}
 
-			// Name column
+			// Name
 			name := truncate(br.Name, colName)
 			if br.IsCurrent {
-				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorGreen).Bold(true).Render(name))
-			} else {
-				row.WriteString(name)
+				name = lipgloss.NewStyle().Foreground(common.ColorGreen).Bold(true).Render(name)
 			}
-			padCol(&row, colName, len(name))
 
-			// Ahead column
+			// Ahead
+			aheadStr := ""
 			if br.Ahead > 0 {
-				aStr := fmt.Sprintf("%d↑", br.Ahead)
-				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorGreen).Render(aStr))
-				padCol(&row, colAhead, lipgloss.Width(aStr))
-			} else {
-				padCol(&row, colAhead, 0)
+				aheadStr = lipgloss.NewStyle().Foreground(common.ColorGreen).Render(fmt.Sprintf("%d↑", br.Ahead))
 			}
 
-			// Behind column
+			// Behind
+			behindStr := ""
 			if br.Behind > 0 {
-				bStr := fmt.Sprintf("%d↓", br.Behind)
-				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorRed).Render(bStr))
-				padCol(&row, colBehind, lipgloss.Width(bStr))
-			} else {
-				padCol(&row, colBehind, 0)
+				behindStr = lipgloss.NewStyle().Foreground(common.ColorRed).Render(fmt.Sprintf("%d↓", br.Behind))
 			}
 
-			// Merged column
+			// Merged
+			mergedStr := ""
 			if br.Merged && br.Name != m.Repo.DefaultBranch {
-				row.WriteString(lipgloss.NewStyle().Foreground(common.ColorGreen).Render("✓"))
-				padCol(&row, colMerged, 1)
-			} else {
-				padCol(&row, colMerged, 0)
+				mergedStr = lipgloss.NewStyle().Foreground(common.ColorGreen).Render("✓")
 			}
 
-			// Date column
-			row.WriteString(disabledStyle.Render(fmt.Sprintf("%-*s", colDate, br.LastDate)) + " ")
+			row := prefix +
+				nameCol.Render(name) +
+				aheadCol.Render(aheadStr) +
+				behindCol.Render(behindStr) +
+				mergedCol.Render(mergedStr) +
+				dateCol.Render(disabledStyle.Render(br.LastDate)) +
+				disabledStyle.Render(truncate(br.LastMsg, colMsg))
 
-			// Message column
-			row.WriteString(disabledStyle.Render(truncate(br.LastMsg, colMsg)))
-
-			rowStr := row.String()
 			if i == m.branchCursor {
-				b.WriteString(lipgloss.NewStyle().Background(common.ColorSurface).Width(m.width).Render(rowStr) + "\n")
+				b.WriteString(lipgloss.NewStyle().Background(common.ColorSurface).Width(m.width).Render(row) + "\n")
 			} else {
-				b.WriteString(rowStr + "\n")
+				b.WriteString(row + "\n")
 			}
 		}
 	}
@@ -547,7 +541,6 @@ func (m *Model) renderActionGrid() string {
 	b.WriteString("  " + lipgloss.JoinHorizontal(lipgloss.Top, styledCols...) + "\n")
 	return b.String()
 }
-
 
 // Diff colorization
 
@@ -687,15 +680,6 @@ func fileChangeIndicator(c git.ChangeInfo) string {
 		u = unstaged.Render(u)
 	}
 	return s + u
-}
-
-// padCol writes spaces to fill a column to its target width.
-func padCol(b *strings.Builder, colWidth, contentWidth int) {
-	pad := colWidth - contentWidth + 1
-	if pad < 1 {
-		pad = 1
-	}
-	b.WriteString(strings.Repeat(" ", pad))
 }
 
 func truncate(s string, maxLen int) string {
