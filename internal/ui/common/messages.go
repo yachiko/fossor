@@ -36,8 +36,8 @@ type BulkOperationTickMsg struct {
 // StatusClearMsg clears the status bar message after a delay.
 type StatusClearMsg struct{}
 
-// SwitchToDetailMsg requests navigation to the detail screen.
-type SwitchToDetailMsg struct {
+// SwitchToManageMsg requests navigation to the manage screen.
+type SwitchToManageMsg struct {
 	Repo git.RepoInfo
 }
 
@@ -48,10 +48,4 @@ type SwitchToMainMsg struct{}
 type StatusMsg struct {
 	Text      string
 	AutoClear bool // if true, message auto-clears after a few seconds
-}
-
-// CLIOutputMsg carries output from a CLI command in the detail view.
-type CLIOutputMsg struct {
-	Output string
-	Err    error
 }

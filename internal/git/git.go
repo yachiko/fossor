@@ -116,26 +116,56 @@ func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int,
 }
 
 func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, error) {
-	out, err := g.run(ctx, path, "status", "--porcelain")
-	if err != nil {
-		return nil, err
+	// Run directly instead of via g.run() — porcelain output has significant
+	// leading spaces (e.g. " M file") that TrimSpace would destroy.
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain", "-uall")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
 	}
+
+	out := strings.TrimRight(stdout.String(), "\n\r ")
 	if out == "" {
 		return nil, nil
 	}
+
+	// Detect submodule paths from .gitmodules
+	submodulePaths := getSubmodulePaths(path)
 
 	var changes []ChangeInfo
 	for _, line := range strings.Split(out, "\n") {
 		if len(line) < 3 {
 			continue
 		}
+		p := strings.TrimSpace(line[3:])
 		changes = append(changes, ChangeInfo{
-			Staged:   line[0],
-			Unstaged: line[1],
-			Path:     strings.TrimSpace(line[3:]),
+			Staged:      line[0],
+			Unstaged:    line[1],
+			Path:        p,
+			IsSubmodule: submodulePaths[p],
 		})
 	}
 	return changes, nil
+}
+
+// getSubmodulePaths reads .gitmodules and returns a set of submodule paths.
+func getSubmodulePaths(repoPath string) map[string]bool {
+	cmd := exec.Command("git", "-C", repoPath, "config", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	paths := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		// Format: "submodule.<name>.path <value>"
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			paths[parts[1]] = true
+		}
+	}
+	return paths
 }
 
 func (g *ExecGit) GetRepoInfo(ctx context.Context, path string) (RepoInfo, error) {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/ahoma/fossor/internal/git"
 	"github.com/ahoma/fossor/internal/ui/common"
-	"github.com/ahoma/fossor/internal/ui/detailscreen"
+	"github.com/ahoma/fossor/internal/ui/fixscreen"
 	"github.com/ahoma/fossor/internal/ui/mainscreen"
 )
 
@@ -19,7 +19,7 @@ type screen int
 
 const (
 	screenMain screen = iota
-	screenDetail
+	screenManage
 )
 
 // App is the root bubbletea model.
@@ -31,7 +31,7 @@ type App struct {
 
 	screen      screen
 	mainScreen  mainscreen.Model
-	detailModel *detailscreen.Model
+	manageModel *fixscreen.Model
 
 	discovering bool
 	discovered  int
@@ -71,8 +71,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.mainScreen.SetSize(msg.Width, msg.Height)
-		if a.detailModel != nil {
-			a.detailModel.SetSize(msg.Width, msg.Height)
+		if a.manageModel != nil {
+			a.manageModel.SetSize(msg.Width, msg.Height)
 		}
 		return a, nil
 
@@ -102,22 +102,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.mainScreen.SetStatus(fmt.Sprintf("Scan complete: %d repos", a.discovered))
 		return a, a.scheduleClearStatus()
 
-	case common.SwitchToDetailMsg:
-		dm := detailscreen.New(a.git, msg.Repo)
-		dm.SetSize(a.width, a.height)
-		a.detailModel = &dm
-		a.screen = screenDetail
-		return a, dm.Init()
+	case common.SwitchToManageMsg:
+		fm := fixscreen.New(a.git, msg.Repo)
+		fm.SetSize(a.width, a.height)
+		a.manageModel = &fm
+		a.screen = screenManage
+		return a, fm.Init()
 
 	case common.SwitchToMainMsg:
 		a.screen = screenMain
-		a.detailModel = nil
+		a.manageModel = nil
 		return a, nil
 
 	case common.RepoUpdatedMsg:
 		a.mainScreen.UpdateRepo(msg.Repo)
-		if a.detailModel != nil && a.detailModel.Repo.Path == msg.Repo.Path {
-			a.detailModel.UpdateRepo(msg.Repo)
+		if a.manageModel != nil && a.manageModel.Repo.Path == msg.Repo.Path {
+			a.manageModel.UpdateRepo(msg.Repo)
 		}
 		return a, nil
 
@@ -129,8 +129,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			status += ": done"
 		}
 		a.mainScreen.SetStatus(status)
-		if a.detailModel != nil {
-			a.detailModel.SetStatus(status)
+		if a.manageModel != nil {
+			a.manageModel.SetStatus(status)
 		}
 		return a, a.scheduleClearStatus()
 
@@ -165,8 +165,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case common.StatusMsg:
 		a.mainScreen.SetStatus(msg.Text)
-		if a.detailModel != nil {
-			a.detailModel.SetStatus(msg.Text)
+		if a.manageModel != nil {
+			a.manageModel.SetStatus(msg.Text)
 		}
 		if msg.AutoClear {
 			return a, a.scheduleClearStatus()
@@ -175,8 +175,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case common.StatusClearMsg:
 		a.mainScreen.SetStatus("")
-		if a.detailModel != nil {
-			a.detailModel.SetStatus("")
+		if a.manageModel != nil {
+			a.manageModel.SetStatus("")
 		}
 		return a, nil
 	}
@@ -186,12 +186,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenMain:
 		cmd := a.mainScreen.Update(msg)
 		return a, cmd
-	case screenDetail:
-		if a.detailModel != nil {
-			if a.detailModel.HandleInternalMsg(msg) {
-				return a, nil
+	case screenManage:
+		if a.manageModel != nil {
+			if handled, cmd := a.manageModel.HandleInternalMsg(msg); handled {
+				return a, cmd
 			}
-			cmd := a.detailModel.Update(msg)
+			cmd := a.manageModel.Update(msg)
 			return a, cmd
 		}
 	}
@@ -201,9 +201,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a *App) View() string {
 	switch a.screen {
-	case screenDetail:
-		if a.detailModel != nil {
-			return a.detailModel.View()
+	case screenManage:
+		if a.manageModel != nil {
+			return a.manageModel.View()
 		}
 	}
 	return a.mainScreen.View()

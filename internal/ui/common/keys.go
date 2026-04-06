@@ -25,7 +25,7 @@ type MainKeyMap struct {
 
 var MainKeys = MainKeyMap{
 	Quit:             key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
-	Enter:            key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "details")),
+	Enter:            key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "manage")),
 	Pull:             key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull")),
 	PullAll:          key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "pull all")),
 	Fetch:            key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch")),
@@ -41,31 +41,4 @@ var MainKeys = MainKeyMap{
 	Sort4:            key.NewBinding(key.WithKeys("4")),
 	Sort5:            key.NewBinding(key.WithKeys("5")),
 	Sort6:            key.NewBinding(key.WithKeys("6")),
-}
-
-// DetailKeyMap defines key bindings for the detail screen.
-type DetailKeyMap struct {
-	Quit     key.Binding
-	Back     key.Binding
-	Tab      key.Binding
-	ShiftTab key.Binding
-	Pull     key.Binding
-	Push     key.Binding
-	Tab1     key.Binding
-	Tab2     key.Binding
-	Tab3     key.Binding
-	Tab4     key.Binding
-}
-
-var DetailKeys = DetailKeyMap{
-	Quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
-	Back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-	Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
-	ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev tab")),
-	Pull:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull")),
-	Push:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "push")),
-	Tab1:     key.NewBinding(key.WithKeys("1"), key.WithHelp("1-4", "tab")),
-	Tab2:     key.NewBinding(key.WithKeys("2")),
-	Tab3:     key.NewBinding(key.WithKeys("3")),
-	Tab4:     key.NewBinding(key.WithKeys("4")),
 }

@@ -62,7 +62,8 @@ type CommitInfo struct {
 
 // ChangeInfo represents a file change from git status.
 type ChangeInfo struct {
-	Staged   byte // first char of porcelain status
-	Unstaged byte // second char of porcelain status
-	Path     string
+	Staged      byte // first char of porcelain status
+	Unstaged    byte // second char of porcelain status
+	Path        string
+	IsSubmodule bool
 }

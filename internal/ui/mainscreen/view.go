@@ -202,7 +202,7 @@ func (m *Model) View() string {
 
 	// Status bar
 	helpPairs := []string{
-		"↵", "details",
+		"↵", "manage",
 		"s", "search",
 		"t", "filter",
 		"1-6", "sort",

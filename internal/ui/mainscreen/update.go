@@ -30,7 +30,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	case key.Matches(msg, common.MainKeys.Enter):
 		if repo, ok := m.SelectedRepo(); ok {
-			return func() tea.Msg { return common.SwitchToDetailMsg{Repo: repo} }
+			return func() tea.Msg { return common.SwitchToManageMsg{Repo: repo} }
 		}
 
 	case key.Matches(msg, common.MainKeys.Pull):
