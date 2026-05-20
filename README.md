@@ -43,6 +43,7 @@ fossor [path] [flags]
 
 - `-r, --recursive` -- recursively scan for git repositories
 - `--no-fetch` -- skip git fetch during discovery
+- `--no-auto-refresh` -- disable the periodic background refresh of the selected repo
 
 **Examples:**
 
