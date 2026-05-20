@@ -236,6 +236,12 @@ func (m *Model) switchDefaultSelected() tea.Cmd {
 	)
 }
 
+// bulkOpConcurrency caps how many parallel git subprocesses we spawn for
+// pull-all / fetch-all / switch-all. Bounds fd / process pressure on large
+// scans and shrinks the race window where stale .git/*.lock files can
+// otherwise be left behind.
+const bulkOpConcurrency = 8
+
 func (m *Model) switchDefaultAll() tea.Cmd {
 	g := m.Git
 	var repos []git.RepoInfo
@@ -252,10 +258,13 @@ func (m *Model) switchDefaultAll() tea.Cmd {
 	}
 	total := int64(len(repos))
 	var counter int64
+	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
 	for _, r := range repos {
 		r := r
 		cmds = append(cmds, func() tea.Msg {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			ctx := context.Background()
 			_, err := g.SwitchBranch(ctx, r.Path, r.DefaultBranch)
 			done := atomic.AddInt64(&counter, 1) == total
@@ -278,10 +287,13 @@ func (m *Model) pullAll() tea.Cmd {
 	total := int64(len(indices))
 	var counter int64
 	g := m.Git
+	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
 	for _, idx := range indices {
 		r := m.Repos[idx]
 		cmds = append(cmds, func() tea.Msg {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			ctx := context.Background()
 			_, err := g.Pull(ctx, r.Path)
 			done := atomic.AddInt64(&counter, 1) == total
@@ -304,10 +316,13 @@ func (m *Model) fetchAll() tea.Cmd {
 	total := int64(len(indices))
 	var counter int64
 	g := m.Git
+	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
 	for _, idx := range indices {
 		r := m.Repos[idx]
 		cmds = append(cmds, func() tea.Msg {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			ctx := context.Background()
 			err := g.Fetch(ctx, r.Path)
 			done := atomic.AddInt64(&counter, 1) == total
