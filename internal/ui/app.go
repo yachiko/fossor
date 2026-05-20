@@ -11,8 +11,8 @@ import (
 
 	"github.com/ahoma/fossor/internal/git"
 	"github.com/ahoma/fossor/internal/ui/common"
-	"github.com/ahoma/fossor/internal/ui/manageview"
 	"github.com/ahoma/fossor/internal/ui/mainscreen"
+	"github.com/ahoma/fossor/internal/ui/manageview"
 )
 
 type screen int
@@ -24,9 +24,9 @@ const (
 
 // App is the root bubbletea model.
 type App struct {
-	git       git.Git
-	rootDir   string
-	recursive bool
+	git           git.Git
+	rootDir       string
+	recursive     bool
 	noFetch       bool
 	noAutoRefresh bool
 
@@ -52,13 +52,13 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool) *
 	s.Style = lipgloss.NewStyle().Foreground(common.ColorAccent)
 
 	return &App{
-		git:        g,
-		rootDir:    rootDir,
-		recursive:  recursive,
+		git:           g,
+		rootDir:       rootDir,
+		recursive:     recursive,
 		noFetch:       noFetch,
 		noAutoRefresh: noAutoRefresh,
-		mainScreen: mainscreen.New(g, rootDir),
-		spinner:    s,
+		mainScreen:    mainscreen.New(g, rootDir),
+		spinner:       s,
 	}
 }
 

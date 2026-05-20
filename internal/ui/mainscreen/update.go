@@ -315,4 +315,3 @@ func (m *Model) RefreshSelected(g git.Git) tea.Cmd {
 		return nil
 	}
 }
-

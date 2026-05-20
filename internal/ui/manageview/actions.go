@@ -10,7 +10,7 @@ import (
 type Category int
 
 const (
-	CatRemote  Category = iota
+	CatRemote Category = iota
 	CatBranch
 	CatChanges
 	CatHistory
