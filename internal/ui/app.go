@@ -29,6 +29,7 @@ type App struct {
 	recursive     bool
 	noFetch       bool
 	noAutoRefresh bool
+	openCmd       string
 
 	screen      screen
 	mainScreen  mainscreen.Model
@@ -46,7 +47,7 @@ type App struct {
 // NewApp creates the root application model.
 const autoRefreshInterval = 30 * time.Second
 
-func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool) *App {
+func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, openCmd string) *App {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(common.ColorAccent)
@@ -57,7 +58,8 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool) *
 		recursive:     recursive,
 		noFetch:       noFetch,
 		noAutoRefresh: noAutoRefresh,
-		mainScreen:    mainscreen.New(g, rootDir),
+		openCmd:       openCmd,
+		mainScreen:    mainscreen.New(g, rootDir, openCmd),
 		spinner:       s,
 	}
 }

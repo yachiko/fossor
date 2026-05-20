@@ -50,7 +50,7 @@ func TestMatchesFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := New(nil, "")
+			m := New(nil, "", "")
 			m.filterMode = tt.filter
 			got := m.matchesFilter(tt.repo)
 			if got != tt.want {
@@ -62,7 +62,7 @@ func TestMatchesFilter(t *testing.T) {
 
 func TestCycleFilter(t *testing.T) {
 	t.Run("starts at All with one Behind repo, goes to Behind, then back to All", func(t *testing.T) {
-		m := New(nil, "")
+		m := New(nil, "", "")
 		m.Repos = []git.RepoInfo{
 			{Name: "repo1", Status: git.StatusBehind},
 		}
@@ -82,7 +82,7 @@ func TestCycleFilter(t *testing.T) {
 	})
 
 	t.Run("all statuses empty stays at All", func(t *testing.T) {
-		m := New(nil, "")
+		m := New(nil, "", "")
 		m.Repos = nil
 		m.filterMode = FilterAll
 
@@ -93,7 +93,7 @@ func TestCycleFilter(t *testing.T) {
 	})
 
 	t.Run("skips statuses with 0 repos", func(t *testing.T) {
-		m := New(nil, "")
+		m := New(nil, "", "")
 		m.Repos = []git.RepoInfo{
 			{Name: "repo1", Status: git.StatusAhead},
 			{Name: "repo2", Status: git.StatusDirty},

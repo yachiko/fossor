@@ -16,6 +16,7 @@ var (
 	recursive     bool
 	noFetch       bool
 	noAutoRefresh bool
+	openCmd       string
 )
 
 var rootCmd = &cobra.Command{
@@ -28,8 +29,13 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
+		resolvedOpenCmd := openCmd
+		if resolvedOpenCmd == "" {
+			resolvedOpenCmd = os.Getenv("FOSSOR_OPEN_CMD")
+		}
+
 		g := git.NewExecGit()
-		app := ui.NewApp(g, rootDir, recursive, noFetch, noAutoRefresh)
+		app := ui.NewApp(g, rootDir, recursive, noFetch, noAutoRefresh, resolvedOpenCmd)
 
 		p := tea.NewProgram(app, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
@@ -43,6 +49,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively scan for git repositories")
 	rootCmd.Flags().BoolVar(&noFetch, "no-fetch", false, "Skip git fetch during discovery")
 	rootCmd.Flags().BoolVar(&noAutoRefresh, "no-auto-refresh", false, "Disable periodic background refresh")
+	rootCmd.Flags().StringVar(&openCmd, "open-cmd", "", "Command to open the selected repo's directory (e.g. 'code', 'cursor'). Falls back to $FOSSOR_OPEN_CMD if unset.")
 }
 
 func Execute() error {

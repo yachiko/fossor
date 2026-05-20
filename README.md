@@ -44,6 +44,7 @@ fossor [path] [flags]
 - `-r, --recursive` -- recursively scan for git repositories
 - `--no-fetch` -- skip git fetch during discovery
 - `--no-auto-refresh` -- disable the periodic background refresh of the selected repo
+- `--open-cmd <cmd>` -- command used to open the selected repo (e.g. `code`, `cursor`). When set, the `o` key on the main screen runs `<cmd> <repo-path>`. Falls back to `$FOSSOR_OPEN_CMD` if the flag is empty. Hidden from help when neither is set.
 
 **Examples:**
 
@@ -71,6 +72,7 @@ fossor ~/work -r --no-fetch
 | `p` / `P` | Pull selected / all                       |
 | `f` / `F` | Fetch selected / all                      |
 | `d` / `D` | Switch to default branch (selected / all) |
+| `o`       | Open in external editor (requires `--open-cmd` / `$FOSSOR_OPEN_CMD`) |
 | `j` / `k` | Move cursor down / up                     |
 | `q`       | Quit                                      |
 
