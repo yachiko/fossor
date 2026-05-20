@@ -37,6 +37,21 @@ func NewExecGit() *ExecGit {
 }
 
 func (g *ExecGit) run(ctx context.Context, path string, args ...string) (string, error) {
+	out, err := runGitOnce(ctx, path, args...)
+	if err == nil {
+		return out, nil
+	}
+	if !looksLikeLockError(err.Error()) {
+		return "", err
+	}
+	cleared, _ := tryClearStaleLocks(path)
+	if len(cleared) == 0 {
+		return "", err
+	}
+	return runGitOnce(ctx, path, args...)
+}
+
+func runGitOnce(ctx context.Context, path string, args ...string) (string, error) {
 	allArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", allArgs...)
 
@@ -48,6 +63,89 @@ func (g *ExecGit) run(ctx context.Context, path string, args ...string) (string,
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// staleLockThreshold is how long a *.lock file must be untouched before we
+// consider it abandoned. Package-level so tests can override it.
+var staleLockThreshold = 5 * time.Second
+
+// lockErrorMarkers are substrings git uses when refusing to run because of an
+// existing lock file. Matching any of them in stderr triggers the stale-lock
+// recovery path.
+var lockErrorMarkers = []string{
+	"Another git process seems to be running",
+	"Unable to create '",
+	"could not lock",
+	"cannot lock ref",
+}
+
+func looksLikeLockError(s string) bool {
+	for _, m := range lockErrorMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// tryClearStaleLocks scans the well-known lock files under repoPath/.git and
+// removes any that look genuinely abandoned (mtime older than
+// staleLockThreshold and not held by any process per lsof, if available). It
+// returns the list of removed paths. Never removes a lock that could still be
+// held by a live process.
+func tryClearStaleLocks(repoPath string) ([]string, error) {
+	gitDir := filepath.Join(repoPath, ".git")
+	candidates := []string{
+		filepath.Join(gitDir, "index.lock"),
+		filepath.Join(gitDir, "HEAD.lock"),
+		filepath.Join(gitDir, "packed-refs.lock"),
+	}
+	if matches, err := filepath.Glob(filepath.Join(gitDir, "refs", "remotes", "origin", "*.lock")); err == nil {
+		candidates = append(candidates, matches...)
+	}
+	if matches, err := filepath.Glob(filepath.Join(gitDir, "refs", "heads", "*.lock")); err == nil {
+		candidates = append(candidates, matches...)
+	}
+
+	var cleared []string
+	for _, lock := range candidates {
+		if !isStaleLock(lock) {
+			continue
+		}
+		if err := os.Remove(lock); err == nil {
+			cleared = append(cleared, lock)
+		}
+	}
+	return cleared, nil
+}
+
+func isStaleLock(lock string) bool {
+	info, err := os.Stat(lock)
+	if err != nil {
+		return false
+	}
+	if time.Since(info.ModTime()) < staleLockThreshold {
+		return false
+	}
+	if lockHasHolder(lock) {
+		return false
+	}
+	return true
+}
+
+// lockHasHolder uses lsof (if available) to check whether any process holds
+// the lock file open. Returns true on positive identification of a holder,
+// false otherwise (including when lsof is missing or errors out — we only want
+// to *block* removal on confirmed live holders, not on tool absence).
+func lockHasHolder(lock string) bool {
+	if _, err := exec.LookPath("lsof"); err != nil {
+		return false
+	}
+	out, err := exec.Command("lsof", "-t", lock).Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(out))) > 0
 }
 
 func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {

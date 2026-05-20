@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setupTestRepo(t *testing.T) string {
@@ -223,6 +224,144 @@ func TestComputeStatus(t *testing.T) {
 				t.Errorf("computeStatus(%+v) = %s, want %s", tt.info, got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestLooksLikeLockError(t *testing.T) {
+	tests := []struct {
+		stderr string
+		want   bool
+	}{
+		{"fatal: Unable to create '/foo/.git/index.lock': File exists.", true},
+		{"Another git process seems to be running in this repository", true},
+		{"fatal: could not lock config file .git/config", true},
+		{"error: cannot lock ref 'refs/heads/main'", true},
+		{"fatal: not a git repository", false},
+		{"Updating ab12cd3..ef45gh6", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := looksLikeLockError(tt.stderr); got != tt.want {
+			t.Errorf("looksLikeLockError(%q) = %v, want %v", tt.stderr, got, tt.want)
+		}
+	}
+}
+
+func TestTryClearStaleLocks(t *testing.T) {
+	// Shorten the threshold so the test runs fast without sleeping seconds.
+	orig := staleLockThreshold
+	staleLockThreshold = 50 * time.Millisecond
+	t.Cleanup(func() { staleLockThreshold = orig })
+
+	makeRepoDirs := func(t *testing.T) string {
+		t.Helper()
+		root := t.TempDir()
+		for _, sub := range []string{".git", ".git/refs/remotes/origin", ".git/refs/heads"} {
+			if err := os.MkdirAll(filepath.Join(root, sub), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+
+	writeLock := func(t *testing.T, path string, age time.Duration) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte{}, 0644); err != nil {
+			t.Fatal(err)
+		}
+		past := time.Now().Add(-age)
+		if err := os.Chtimes(path, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("removes stale index.lock", func(t *testing.T) {
+		root := makeRepoDirs(t)
+		lock := filepath.Join(root, ".git", "index.lock")
+		writeLock(t, lock, 500*time.Millisecond)
+
+		cleared, err := tryClearStaleLocks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cleared) != 1 || cleared[0] != lock {
+			t.Errorf("expected to clear %s, got %v", lock, cleared)
+		}
+		if _, err := os.Stat(lock); !os.IsNotExist(err) {
+			t.Errorf("expected lock to be removed, stat err: %v", err)
+		}
+	})
+
+	t.Run("keeps fresh lock", func(t *testing.T) {
+		root := makeRepoDirs(t)
+		lock := filepath.Join(root, ".git", "index.lock")
+		writeLock(t, lock, 0) // brand new
+
+		cleared, err := tryClearStaleLocks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cleared) != 0 {
+			t.Errorf("expected no clears for fresh lock, got %v", cleared)
+		}
+		if _, err := os.Stat(lock); err != nil {
+			t.Errorf("fresh lock should still exist: %v", err)
+		}
+	})
+
+	t.Run("removes stale ref locks under refs/", func(t *testing.T) {
+		root := makeRepoDirs(t)
+		l1 := filepath.Join(root, ".git", "refs", "remotes", "origin", "main.lock")
+		l2 := filepath.Join(root, ".git", "refs", "heads", "feature.lock")
+		writeLock(t, l1, 500*time.Millisecond)
+		writeLock(t, l2, 500*time.Millisecond)
+
+		cleared, err := tryClearStaleLocks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cleared) != 2 {
+			t.Errorf("expected 2 clears, got %v", cleared)
+		}
+	})
+
+	t.Run("no-op when no locks exist", func(t *testing.T) {
+		root := makeRepoDirs(t)
+		cleared, err := tryClearStaleLocks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cleared) != 0 {
+			t.Errorf("expected no clears on clean repo, got %v", cleared)
+		}
+	})
+}
+
+func TestRunRetriesAfterStaleLock(t *testing.T) {
+	// End-to-end check: a stale .git/index.lock blocks a write op (e.g.
+	// `git commit --allow-empty`). With our retry in place, the op should
+	// succeed after the stale lock is cleared.
+	orig := staleLockThreshold
+	staleLockThreshold = 50 * time.Millisecond
+	t.Cleanup(func() { staleLockThreshold = orig })
+
+	dir := setupTestRepo(t)
+	lock := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lock, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-500 * time.Millisecond)
+	if err := os.Chtimes(lock, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	g := NewExecGit()
+	_, err := g.run(context.Background(), dir, "commit", "--allow-empty", "-m", "retry test")
+	if err != nil {
+		t.Fatalf("expected commit to succeed after stale-lock recovery, got: %v", err)
+	}
+	if _, err := os.Stat(lock); !os.IsNotExist(err) {
+		t.Errorf("expected lock to be gone after recovery, stat err: %v", err)
 	}
 }
 
