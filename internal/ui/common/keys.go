@@ -21,6 +21,7 @@ type MainKeyMap struct {
 	Sort4            key.Binding
 	Sort5            key.Binding
 	Sort6            key.Binding
+	Open             key.Binding
 }
 
 var MainKeys = MainKeyMap{
@@ -41,4 +42,5 @@ var MainKeys = MainKeyMap{
 	Sort4:            key.NewBinding(key.WithKeys("4")),
 	Sort5:            key.NewBinding(key.WithKeys("5")),
 	Sort6:            key.NewBinding(key.WithKeys("6")),
+	Open:             key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open")),
 }

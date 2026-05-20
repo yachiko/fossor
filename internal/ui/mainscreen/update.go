@@ -2,6 +2,8 @@ package mainscreen
 
 import (
 	"context"
+	"os/exec"
+	"strings"
 	"sync/atomic"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -50,6 +52,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	case key.Matches(msg, common.MainKeys.SwitchDefaultAll):
 		return m.switchDefaultAll()
+
+	case key.Matches(msg, common.MainKeys.Open):
+		return m.openSelected()
 
 	case key.Matches(msg, common.MainKeys.Search):
 		m.searching = true
@@ -133,6 +138,25 @@ func (m *Model) toggleSort(col SortColumn) {
 		m.sortAsc = true
 	}
 	m.refilter()
+}
+
+func (m *Model) openSelected() tea.Cmd {
+	if m.OpenCmd == "" {
+		return nil
+	}
+	repo, ok := m.SelectedRepo()
+	if !ok {
+		return nil
+	}
+	parts := strings.Fields(m.OpenCmd)
+	if len(parts) == 0 {
+		return nil
+	}
+	args := append(parts[1:], repo.Path)
+	cmd := exec.Command(parts[0], args...)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return common.OperationResultMsg{RepoName: repo.Name, Op: "open", Err: err}
+	})
 }
 
 func (m *Model) pullSelected() tea.Cmd {

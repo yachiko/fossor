@@ -51,6 +51,7 @@ type Model struct {
 	Repos        []git.RepoInfo
 	Git          git.Git
 	RootDir      string
+	OpenCmd      string
 	cursor       int
 	scrollOffset int
 	sortCol      SortColumn
@@ -65,7 +66,7 @@ type Model struct {
 }
 
 // New creates a new main screen model.
-func New(g git.Git, rootDir string) Model {
+func New(g git.Git, rootDir, openCmd string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search repos..."
 	ti.CharLimit = 100
@@ -73,6 +74,7 @@ func New(g git.Git, rootDir string) Model {
 	return Model{
 		Git:        g,
 		RootDir:    rootDir,
+		OpenCmd:    openCmd,
 		sortCol:    SortName,
 		sortAsc:    true,
 		searchText: ti,

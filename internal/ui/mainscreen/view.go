@@ -218,8 +218,11 @@ func (m *Model) View() string {
 		"p/P", "pull",
 		"f/F", "fetch",
 		"d/D", "default",
-		"q", "quit",
 	}
+	if m.OpenCmd != "" {
+		helpPairs = append(helpPairs, "o", "open")
+	}
+	helpPairs = append(helpPairs, "q", "quit")
 	b.WriteString(components.StatusBar(m.width, helpPairs, m.statusMsg))
 
 	return b.String()
