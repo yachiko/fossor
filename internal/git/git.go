@@ -109,28 +109,46 @@ func tryClearStaleLocks(repoPath string) ([]string, error) {
 
 	var cleared []string
 	for _, lock := range candidates {
-		if !isStaleLock(lock) {
+		info, err := os.Stat(lock)
+		if err != nil {
 			continue
 		}
+		if time.Since(info.ModTime()) < staleLockThreshold {
+			continue
+		}
+		if lockHasHolder(lock) {
+			continue
+		}
+		age := time.Since(info.ModTime())
 		if err := os.Remove(lock); err == nil {
 			cleared = append(cleared, lock)
+			debugLog("stale-lock cleared repo=%s lock=%s age=%s", repoPath, lock, age.Truncate(time.Millisecond))
 		}
 	}
 	return cleared, nil
 }
 
-func isStaleLock(lock string) bool {
-	info, err := os.Stat(lock)
+// debugLog appends a line to ~/.cache/fossor/debug.log when FOSSOR_DEBUG=1.
+// Stays silent (and never errors out the caller) when the env var is unset or
+// the cache dir is unwritable — diagnostics are best-effort.
+func debugLog(format string, args ...any) {
+	if os.Getenv("FOSSOR_DEBUG") != "1" {
+		return
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return false
+		return
 	}
-	if time.Since(info.ModTime()) < staleLockThreshold {
-		return false
+	dir := filepath.Join(home, ".cache", "fossor")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
 	}
-	if lockHasHolder(lock) {
-		return false
+	f, err := os.OpenFile(filepath.Join(dir, "debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
 	}
-	return true
+	defer f.Close()
+	fmt.Fprintf(f, "%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
 }
 
 // lockHasHolder uses lsof (if available) to check whether any process holds
