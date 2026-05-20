@@ -297,3 +297,22 @@ func (m *Model) fetchAll() tea.Cmd {
 		tea.Batch(cmds...),
 	)
 }
+
+// RefreshSelected fetches and refreshes the currently selected repo in the background.
+func (m *Model) RefreshSelected(g git.Git) tea.Cmd {
+	repo, ok := m.SelectedRepo()
+	if !ok {
+		return nil
+	}
+	path := repo.Path
+	return func() tea.Msg {
+		ctx := context.Background()
+		_ = g.Fetch(ctx, path)
+		info, err := g.GetRepoInfo(ctx, path)
+		if err == nil {
+			return common.RepoUpdatedMsg{Repo: info}
+		}
+		return nil
+	}
+}
+

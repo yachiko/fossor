@@ -49,3 +49,6 @@ type StatusMsg struct {
 	Text      string
 	AutoClear bool // if true, message auto-clears after a few seconds
 }
+
+// RefreshTickMsg triggers a periodic background refresh of visible repos.
+type RefreshTickMsg struct{}

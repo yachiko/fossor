@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	recursive bool
-	noFetch   bool
+	recursive     bool
+	noFetch       bool
+	noAutoRefresh bool
 )
 
 var rootCmd = &cobra.Command{
@@ -28,7 +29,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		g := git.NewExecGit()
-		app := ui.NewApp(g, rootDir, recursive, noFetch)
+		app := ui.NewApp(g, rootDir, recursive, noFetch, noAutoRefresh)
 
 		p := tea.NewProgram(app, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
@@ -41,6 +42,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively scan for git repositories")
 	rootCmd.Flags().BoolVar(&noFetch, "no-fetch", false, "Skip git fetch during discovery")
+	rootCmd.Flags().BoolVar(&noAutoRefresh, "no-auto-refresh", false, "Disable periodic background refresh")
 }
 
 func Execute() error {

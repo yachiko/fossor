@@ -27,7 +27,8 @@ type App struct {
 	git       git.Git
 	rootDir   string
 	recursive bool
-	noFetch   bool
+	noFetch       bool
+	noAutoRefresh bool
 
 	screen      screen
 	mainScreen  mainscreen.Model
@@ -43,7 +44,9 @@ type App struct {
 }
 
 // NewApp creates the root application model.
-func NewApp(g git.Git, rootDir string, recursive, noFetch bool) *App {
+const autoRefreshInterval = 30 * time.Second
+
+func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool) *App {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(common.ColorAccent)
@@ -52,17 +55,22 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch bool) *App {
 		git:        g,
 		rootDir:    rootDir,
 		recursive:  recursive,
-		noFetch:    noFetch,
+		noFetch:       noFetch,
+		noAutoRefresh: noAutoRefresh,
 		mainScreen: mainscreen.New(g, rootDir),
 		spinner:    s,
 	}
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		a.startDiscovery(),
 		a.spinner.Tick,
-	)
+	}
+	if !a.noAutoRefresh {
+		cmds = append(cmds, a.scheduleAutoRefresh())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -110,9 +118,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, fm.Init()
 
 	case common.SwitchToMainMsg:
+		// Auto-refresh the managed repo on return
+		var refreshCmd tea.Cmd
+		if a.manageModel != nil {
+			path := a.manageModel.Repo.Path
+			g := a.git
+			refreshCmd = func() tea.Msg {
+				ctx := context.Background()
+				info, err := g.GetRepoInfo(ctx, path)
+				if err == nil {
+					return common.RepoUpdatedMsg{Repo: info}
+				}
+				return nil
+			}
+		}
 		a.screen = screenMain
 		a.manageModel = nil
-		return a, nil
+		return a, refreshCmd
 
 	case common.RepoUpdatedMsg:
 		a.mainScreen.UpdateRepo(msg.Repo)
@@ -179,6 +201,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.manageModel.SetStatus("")
 		}
 		return a, nil
+
+	case common.RefreshTickMsg:
+		// Periodic background refresh — only when on main screen and not discovering
+		if a.screen == screenMain && !a.discovering {
+			cmd := a.mainScreen.RefreshSelected(a.git)
+			return a, tea.Batch(cmd, a.scheduleAutoRefresh())
+		}
+		return a, a.scheduleAutoRefresh()
 	}
 
 	// Forward to active screen
@@ -225,6 +255,12 @@ func (a *App) startDiscovery() tea.Cmd {
 
 	ch := git.Discover(ctx, opts)
 	return waitForDiscovery(ch)
+}
+
+func (a *App) scheduleAutoRefresh() tea.Cmd {
+	return tea.Tick(autoRefreshInterval, func(time.Time) tea.Msg {
+		return common.RefreshTickMsg{}
+	})
 }
 
 func (a *App) scheduleClearStatus() tea.Cmd {
