@@ -75,10 +75,10 @@ func TestColorizeDiff(t *testing.T) {
 
 func TestParseHunkHeader(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantOld   int
-		wantNew   int
+		name    string
+		input   string
+		wantOld int
+		wantNew int
 	}{
 		{
 			name:    "standard hunk with counts",

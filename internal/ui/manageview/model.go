@@ -29,7 +29,7 @@ var tabNames = [NumTabs]string{"Status", "History", "Stash", "Branches"}
 type mode int
 
 const (
-	modeNormal  mode = iota
+	modeNormal mode = iota
 	modeConfirm
 	modeInput
 	modeCommit // inline commit message editor
@@ -148,8 +148,6 @@ type branchesLoadedMsg struct {
 	branches []branchInfo
 }
 
-
-
 // New creates a new manage screen model.
 func New(g git.Git, repo git.RepoInfo) Model {
 	actions := AllActions()
@@ -176,7 +174,7 @@ func New(g git.Git, repo git.RepoInfo) Model {
 		actions:        actions,
 		keyMap:         km,
 		textInput:      ti,
-		commitInput:      ci,
+		commitInput:    ci,
 		branchInput:    bi,
 		diffView:       viewport.New(80, 10),
 		commitsView:    viewport.New(80, 20),
