@@ -118,19 +118,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, fm.Init()
 
 	case common.SwitchToMainMsg:
-		// Auto-refresh the managed repo on return
+		// Local-only refresh: manage view actions already touched local state,
+		// and no remote interaction is needed for the round-trip back.
 		var refreshCmd tea.Cmd
 		if a.manageModel != nil {
-			path := a.manageModel.Repo.Path
-			g := a.git
-			refreshCmd = func() tea.Msg {
-				ctx := context.Background()
-				info, err := g.GetRepoInfo(ctx, path)
-				if err == nil {
-					return common.RepoUpdatedMsg{Repo: info}
-				}
-				return nil
-			}
+			refreshCmd = mainscreen.RefreshRepoCmd(a.git, a.manageModel.Repo.Path, false)
 		}
 		a.screen = screenMain
 		a.manageModel = nil
