@@ -159,6 +159,13 @@ make testdata-reset
 make clean
 ```
 
+## Troubleshooting
+
+If a stuck repo seems to keep appearing, set `FOSSOR_DEBUG=1` and re-run fossor.
+Stale `.git/*.lock` files that fossor recovers are logged to
+`~/.cache/fossor/debug.log` with the repo path, lock file, and the lock's age
+at removal time.
+
 ## Tech Stack
 
 - [Go](https://go.dev/)
