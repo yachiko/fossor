@@ -298,20 +298,29 @@ func (m *Model) fetchAll() tea.Cmd {
 	)
 }
 
-// RefreshSelected fetches and refreshes the currently selected repo in the background.
-func (m *Model) RefreshSelected(g git.Git) tea.Cmd {
-	repo, ok := m.SelectedRepo()
-	if !ok {
-		return nil
-	}
-	path := repo.Path
+// RefreshRepoCmd refreshes a single repo's status in the background. When
+// fetch is true, runs git fetch before reading status; otherwise only re-reads
+// local state. Use fetch=false after local operations where the remote is
+// unchanged.
+func RefreshRepoCmd(g git.Git, path string, fetch bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		_ = g.Fetch(ctx, path)
+		if fetch {
+			_ = g.Fetch(ctx, path)
+		}
 		info, err := g.GetRepoInfo(ctx, path)
 		if err == nil {
 			return common.RepoUpdatedMsg{Repo: info}
 		}
 		return nil
 	}
+}
+
+// RefreshSelected fetches and refreshes the currently selected repo in the background.
+func (m *Model) RefreshSelected(g git.Git) tea.Cmd {
+	repo, ok := m.SelectedRepo()
+	if !ok {
+		return nil
+	}
+	return RefreshRepoCmd(g, repo.Path, true)
 }
