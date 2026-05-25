@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -50,6 +51,18 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	// When built without ldflags (e.g. `go install module@version`), fall back
+	// to the module version embedded by the Go toolchain so --version still
+	// reports something useful.
+	if Version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok {
+			if v := info.Main.Version; v != "" && v != "(devel)" {
+				Version = v
+				rootCmd.Version = v
+			}
+		}
+	}
+
 	rootCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively scan for git repositories")
 	rootCmd.Flags().BoolVar(&noFetch, "no-fetch", false, "Skip git fetch during discovery")
 	rootCmd.Flags().BoolVar(&noAutoRefresh, "no-auto-refresh", false, "Disable periodic background refresh")
