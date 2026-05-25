@@ -19,10 +19,14 @@ var (
 	openCmd       string
 )
 
+// Version is set at build time via -ldflags "-X github.com/ahoma/fossor/cmd.Version=...".
+var Version = "dev"
+
 var rootCmd = &cobra.Command{
-	Use:   "fossor [path]",
-	Short: "Manage multiple git repositories from a single TUI",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "fossor [path]",
+	Short:   "Manage multiple git repositories from a single TUI",
+	Version: Version,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rootDir, err := resolveRootDir(args)
 		if err != nil {
