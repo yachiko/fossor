@@ -1,17 +1,18 @@
 BINARY := fossor
 MODULE := github.com/ahoma/fossor
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X $(MODULE)/cmd.Version=$(VERSION)
 
 .PHONY: build run test vet lint clean install deps update testdata testdata-reset
 
 build:
-	go build -o $(BINARY) .
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 run: build
 	./$(BINARY)
 
 install:
-	go install .
+	go install -ldflags "$(LDFLAGS)" .
 
 test:
 	go test ./...
