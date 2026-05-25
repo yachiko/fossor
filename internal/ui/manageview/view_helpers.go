@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ahoma/fossor/internal/git"
-	"github.com/ahoma/fossor/internal/ui/common"
+	"github.com/yachiko/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/ui/common"
 )
 
 // Shared styles

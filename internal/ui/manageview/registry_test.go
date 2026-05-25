@@ -3,7 +3,7 @@ package manageview
 import (
 	"testing"
 
-	"github.com/ahoma/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/git"
 )
 
 func TestAllActions(t *testing.T) {

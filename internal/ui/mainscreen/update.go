@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/ahoma/fossor/internal/git"
-	"github.com/ahoma/fossor/internal/ui/common"
+	"github.com/yachiko/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/ui/common"
 )
 
 func (m *Model) Update(msg tea.Msg) tea.Cmd {

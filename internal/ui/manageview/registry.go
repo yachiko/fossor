@@ -3,7 +3,7 @@ package manageview
 import (
 	"os/exec"
 
-	"github.com/ahoma/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/git"
 )
 
 func always(_ git.RepoInfo) bool { return true }

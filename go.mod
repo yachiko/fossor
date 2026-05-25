@@ -1,4 +1,4 @@
-module github.com/ahoma/fossor
+module github.com/yachiko/fossor
 
 go 1.25.6
 

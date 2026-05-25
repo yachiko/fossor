@@ -20,7 +20,7 @@ Fossor discovers git repos in a directory, shows their consolidated status (bran
 ## Install
 
 ```
-go install github.com/ahoma/fossor@latest
+go install github.com/yachiko/fossor@latest
 ```
 
 Or build from source:

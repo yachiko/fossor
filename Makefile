@@ -1,5 +1,5 @@
 BINARY := fossor
-MODULE := github.com/ahoma/fossor
+MODULE := github.com/yachiko/fossor
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/cmd.Version=$(VERSION)
 

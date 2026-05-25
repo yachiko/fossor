@@ -5,7 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ahoma/fossor/internal/ui/components"
+	"github.com/yachiko/fossor/internal/ui/components"
 )
 
 // Layout constants — shared header and chrome line counts.

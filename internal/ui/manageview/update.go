@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/ahoma/fossor/internal/ui/common"
+	"github.com/yachiko/fossor/internal/ui/common"
 )
 
 func (m *Model) Update(msg tea.Msg) tea.Cmd {
