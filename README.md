@@ -4,6 +4,10 @@ A terminal UI for managing multiple Git repositories from a single screen.
 
 Fossor discovers git repos in a directory, shows their consolidated status (branch, commits ahead/behind, uncommitted changes), and provides a unified manage view with git operations, diff viewer, commit history, stash management, and branch operations.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Fossor TUI showing the main repo table" width="900">
+</p>
+
 ## Features
 
 - **Repository discovery** -- scans a directory for git repos with parallel fetching
