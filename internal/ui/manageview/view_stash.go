@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ahoma/fossor/internal/ui/common"
+	"github.com/yachiko/fossor/internal/ui/common"
 )
 
 // viewStash renders the Stash tab (entry list + stash diff).

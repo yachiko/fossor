@@ -3,7 +3,7 @@ package manageview
 import (
 	"os/exec"
 
-	"github.com/ahoma/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/git"
 )
 
 // Category groups actions in the grid view.

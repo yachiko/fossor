@@ -3,7 +3,7 @@ package mainscreen
 import (
 	"testing"
 
-	"github.com/ahoma/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/git"
 )
 
 func TestMatchesFilter(t *testing.T) {

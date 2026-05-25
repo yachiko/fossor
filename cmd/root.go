@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/ahoma/fossor/internal/git"
-	"github.com/ahoma/fossor/internal/ui"
+	"github.com/yachiko/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/ui"
 )
 
 var (
@@ -19,7 +19,7 @@ var (
 	openCmd       string
 )
 
-// Version is set at build time via -ldflags "-X github.com/ahoma/fossor/cmd.Version=...".
+// Version is set at build time via -ldflags "-X github.com/yachiko/fossor/cmd.Version=...".
 var Version = "dev"
 
 var rootCmd = &cobra.Command{

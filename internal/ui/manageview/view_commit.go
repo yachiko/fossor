@@ -3,7 +3,7 @@ package manageview
 import (
 	"strings"
 
-	"github.com/ahoma/fossor/internal/ui/components"
+	"github.com/yachiko/fossor/internal/ui/components"
 )
 
 // viewCommit renders the inline commit message editor with staged diff.

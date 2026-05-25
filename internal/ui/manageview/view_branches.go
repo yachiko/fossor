@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ahoma/fossor/internal/ui/common"
-	"github.com/ahoma/fossor/internal/ui/components"
+	"github.com/yachiko/fossor/internal/ui/common"
+	"github.com/yachiko/fossor/internal/ui/components"
 )
 
 // viewBranches renders the Branches tab as a table.

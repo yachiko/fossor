@@ -1,6 +1,6 @@
 package common
 
-import "github.com/ahoma/fossor/internal/git"
+import "github.com/yachiko/fossor/internal/git"
 
 // RepoDiscoveredMsg is sent when a repo is discovered during scanning.
 // It carries the channel so the listener can re-subscribe.

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/ahoma/fossor/cmd"
+	"github.com/yachiko/fossor/cmd"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ahoma/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/git"
 )
 
 // fixedDate is used for deterministic commits.
