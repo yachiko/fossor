@@ -102,10 +102,10 @@ func parseHunkHeader(line string) (oldStart, newStart int) {
 	parts := strings.Fields(line)
 	for _, p := range parts {
 		if strings.HasPrefix(p, "-") && len(p) > 1 && p[1] >= '0' && p[1] <= '9' {
-			fmt.Sscanf(p, "-%d", &oldStart)
+			_, _ = fmt.Sscanf(p, "-%d", &oldStart)
 		}
 		if strings.HasPrefix(p, "+") && len(p) > 1 && p[1] >= '0' && p[1] <= '9' {
-			fmt.Sscanf(p, "+%d", &newStart)
+			_, _ = fmt.Sscanf(p, "+%d", &newStart)
 		}
 	}
 	return

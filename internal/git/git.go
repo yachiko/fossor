@@ -147,8 +147,8 @@ func debugLog(format string, args ...any) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	fmt.Fprintf(f, "%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
+	defer func() { _ = f.Close() }()
+	_, _ = fmt.Fprintf(f, "%s "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
 }
 
 // lockHasHolder uses lsof (if available) to check whether any process holds
