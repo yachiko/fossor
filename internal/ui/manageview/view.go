@@ -29,10 +29,10 @@ func (m *Model) View() string {
 	if remote == "" {
 		remote = "–"
 	}
-	b.WriteString(fmt.Sprintf("  %s  %s → %s  remote:%s  ahead:%d  behind:%d  changes:%d  stash:%d\n",
+	fmt.Fprintf(&b, "  %s  %s → %s  remote:%s  ahead:%d  behind:%d  changes:%d  stash:%d\n",
 		statusStyled, m.Repo.Branch, m.Repo.DefaultBranch, remote,
 		m.Repo.Ahead, m.Repo.Behind, m.Repo.Changes, len(m.stashEntries),
-	))
+	)
 
 	// Line 3: tab bar
 	var tabViews []string
@@ -75,9 +75,9 @@ func (m *Model) viewStatus() string {
 	if m.lastAction != "" {
 		actionLabel := lipgloss.NewStyle().Foreground(common.ColorAccent).Render(m.lastAction)
 		if m.lastErr != nil {
-			bottom.WriteString(fmt.Sprintf("  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorRed).Render(m.lastErr.Error())))
+			fmt.Fprintf(&bottom, "  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorRed).Render(m.lastErr.Error()))
 		} else {
-			bottom.WriteString(fmt.Sprintf("  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorGreen).Render("done")))
+			fmt.Fprintf(&bottom, "  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorGreen).Render("done"))
 		}
 	}
 
@@ -87,7 +87,7 @@ func (m *Model) viewStatus() string {
 		bottom.WriteString(warnStyle.Render(fmt.Sprintf("  Execute %q? This is destructive. (y to confirm, any key to cancel)", action.Name)) + "\n")
 	case modeInput:
 		action := m.actions[m.pendingIdx]
-		bottom.WriteString(fmt.Sprintf("  %s\n", action.InputPrompt))
+		fmt.Fprintf(&bottom, "  %s\n", action.InputPrompt)
 		bottom.WriteString("  " + m.textInput.View() + "\n")
 	}
 
@@ -148,7 +148,7 @@ func (m *Model) viewStatus() string {
 				sel := lipgloss.NewStyle().Background(common.ColorSurface).Foreground(common.ColorWhite)
 				fileList.WriteString(sel.Render(fmt.Sprintf("> %s %s", indicator, name)) + "\n")
 			} else {
-				fileList.WriteString(fmt.Sprintf("  %s %s\n", indicator, name))
+				fmt.Fprintf(&fileList, "  %s %s\n", indicator, name)
 			}
 		}
 	}

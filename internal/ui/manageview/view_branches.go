@@ -162,9 +162,9 @@ func (m *Model) renderActionGrid() string {
 				if action.Dangerous {
 					ks = dangerKeyStyle
 				}
-				col.WriteString(fmt.Sprintf("  %s %s\n", ks.Render(action.Key), enabledNameStyle.Render(action.Name)))
+				fmt.Fprintf(&col, "  %s %s\n", ks.Render(action.Key), enabledNameStyle.Render(action.Name))
 			} else {
-				col.WriteString(fmt.Sprintf("  %s %s\n", disabledStyle.Render(action.Key), disabledStyle.Render(action.Name)))
+				fmt.Fprintf(&col, "  %s %s\n", disabledStyle.Render(action.Key), disabledStyle.Render(action.Name))
 			}
 		}
 		columns = append(columns, col.String())

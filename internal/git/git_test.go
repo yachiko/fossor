@@ -120,7 +120,9 @@ func TestDiscovery(t *testing.T) {
 	// Create 3 repos
 	for _, name := range []string{"repo-a", "repo-b", "repo-c"} {
 		dir := filepath.Join(root, name)
-		os.Mkdir(dir, 0755)
+		if err := os.Mkdir(dir, 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
 		cmds := [][]string{
 			{"git", "init"},
 			{"git", "config", "user.email", "test@test.com"},
@@ -137,7 +139,9 @@ func TestDiscovery(t *testing.T) {
 	}
 
 	// Also create a non-repo directory
-	os.Mkdir(filepath.Join(root, "not-a-repo"), 0755)
+	if err := os.Mkdir(filepath.Join(root, "not-a-repo"), 0755); err != nil {
+		t.Fatalf("mkdir not-a-repo: %v", err)
+	}
 
 	g := NewExecGit()
 	ch := Discover(context.Background(), DiscoveryOptions{

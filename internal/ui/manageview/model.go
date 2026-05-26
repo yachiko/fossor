@@ -310,7 +310,7 @@ func (m *Model) loadBranches() tea.Cmd {
 					defaultBranch+"..."+bi.Name)
 				revOut, err := revCmd.Output()
 				if err == nil {
-					fmt.Sscanf(strings.TrimSpace(string(revOut)), "%d\t%d", &bi.Behind, &bi.Ahead)
+					_, _ = fmt.Sscanf(strings.TrimSpace(string(revOut)), "%d\t%d", &bi.Behind, &bi.Ahead)
 				}
 			}
 			branches = append(branches, bi)
@@ -373,8 +373,8 @@ func renderCommits(commits []git.CommitInfo) string {
 
 	var b strings.Builder
 	for _, c := range commits {
-		b.WriteString(fmt.Sprintf("  %s %s\n", hashStyle.Render(c.Short), c.Subject))
-		b.WriteString(fmt.Sprintf("  %s  %s\n\n", authorStyle.Render(c.Author), authorStyle.Render(c.Date.Format("2006-01-02 15:04"))))
+		fmt.Fprintf(&b, "  %s %s\n", hashStyle.Render(c.Short), c.Subject)
+		fmt.Fprintf(&b, "  %s  %s\n\n", authorStyle.Render(c.Author), authorStyle.Render(c.Date.Format("2006-01-02 15:04")))
 	}
 	return b.String()
 }
