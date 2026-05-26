@@ -1,6 +1,12 @@
-# fossor
+<p align="center">
+  <img src="logo.png" alt="Fossor logo" width="170" />
+</p>
 
-A terminal UI for managing multiple Git repositories from a single screen.
+<h1 align="center">Fossor</h1>
+<p align="center"><strong>A terminal UI for managing multiple Git repositories from a single screen.
+</strong></p>
+
+--- 
 
 Fossor discovers git repos in a directory, shows their consolidated status (branch, commits ahead/behind, uncommitted changes), and provides a unified manage view with git operations, diff viewer, commit history, stash management, and branch operations.
 
