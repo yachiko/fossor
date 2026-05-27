@@ -297,11 +297,12 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 			var cmd *exec.Cmd
 			var action string
 			if m.branchInputAction == "create" {
-				cmd = gitCmd(m.Repo.Path, "branch", name)
+				cmd = gitRefCmd(m.Repo.Path, []string{"branch"}, name)
 				action = "create branch " + name
 			} else if m.branchInputAction == "rename" && len(m.branches) > 0 {
 				old := m.branches[m.branchCursor].Name
-				cmd = gitCmd(m.Repo.Path, "branch", "-m", old, name)
+				// `--` separator: both old and new names are user-typed.
+				cmd = exec.Command("git", "-C", m.Repo.Path, "branch", "-m", "--", old, name)
 				action = "rename " + old + " → " + name
 			}
 			if cmd != nil {
@@ -327,7 +328,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 		// Switch to selected branch
 		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
 			name := m.branches[m.branchCursor].Name
-			cmd := gitCmd(m.Repo.Path, "switch", name)
+			cmd := gitRefCmd(m.Repo.Path, []string{"switch"}, name)
 			return tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return execFinishedMsg{action: "switch " + name, err: err}
 			})
@@ -354,7 +355,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 		// Delete branch (safe — fails on unmerged)
 		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
 			name := m.branches[m.branchCursor].Name
-			cmd := gitCmd(m.Repo.Path, "branch", "-d", name)
+			cmd := gitRefCmd(m.Repo.Path, []string{"branch", "-d"}, name)
 			return tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return execFinishedMsg{action: "delete " + name, err: err}
 			})
@@ -363,7 +364,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 		// Force delete branch
 		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
 			name := m.branches[m.branchCursor].Name
-			cmd := gitCmd(m.Repo.Path, "branch", "-D", name)
+			cmd := gitRefCmd(m.Repo.Path, []string{"branch", "-D"}, name)
 			return tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return execFinishedMsg{action: "force delete " + name, err: err}
 			})
