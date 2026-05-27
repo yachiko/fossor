@@ -36,13 +36,21 @@ Fossor discovers git repos in a directory, shows their consolidated status (bran
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew install yachiko/tap/fossor
 ```
+
+### Using Go
+
+```sh
 go install github.com/yachiko/fossor@latest
 ```
 
-Or build from source:
+### From Source
 
-```
+```sh
 make build
 ```
 
