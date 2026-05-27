@@ -277,8 +277,8 @@ func (m *Model) loadBranches() tea.Cmd {
 			"refs/heads/")
 		out, _ := cmd.Output()
 
-		// Get merged branches
-		mergedCmd := exec.Command("git", "-C", repoPath, "branch", "--merged", defaultBranch)
+		// Get merged branches. `--` separator: defaultBranch is repo-controlled.
+		mergedCmd := exec.Command("git", "-C", repoPath, "branch", "--merged", "--", defaultBranch)
 		mergedOut, _ := mergedCmd.Output()
 		mergedSet := make(map[string]bool)
 		for _, line := range strings.Split(strings.TrimSpace(string(mergedOut)), "\n") {
@@ -305,10 +305,12 @@ func (m *Model) loadBranches() tea.Cmd {
 				LastMsg:   git.Sanitize(parts[3]),
 				Merged:    mergedSet[parts[0]],
 			}
-			// Compute ahead/behind relative to default branch
+			// Compute ahead/behind relative to default branch. `--` separator:
+			// defaultBranch and bi.Name are both repo-controlled and the
+			// joined refspec could otherwise be parsed as a flag.
 			if bi.Name != defaultBranch {
 				revCmd := exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count",
-					defaultBranch+"..."+bi.Name)
+					"--", defaultBranch+"..."+bi.Name)
 				revOut, err := revCmd.Output()
 				if err == nil {
 					_, _ = fmt.Sscanf(strings.TrimSpace(string(revOut)), "%d\t%d", &bi.Behind, &bi.Ahead)
