@@ -4,10 +4,28 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
-const defaultConcurrency = 50
+// defaultConcurrency caps the number of in-flight per-repo git invocations
+// during discovery. Picked at startup to scale with the machine: 4×NumCPU
+// keeps the box busy on I/O-bound git fetches without exhausting the
+// default file-descriptor budget (typically 256 on macOS, 1024 on Linux)
+// when scanning hundreds of repos. Floor of 8, ceiling of 16 — past 16 we
+// hit diminishing returns and start trading throughput for FD pressure.
+var defaultConcurrency = discoveryConcurrency()
+
+func discoveryConcurrency() int {
+	n := runtime.NumCPU() * 4
+	if n < 8 {
+		n = 8
+	}
+	if n > 16 {
+		n = 16
+	}
+	return n
+}
 
 // DiscoveryResult carries a discovered repo or indicates completion.
 type DiscoveryResult struct {
