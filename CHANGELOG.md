@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Discovery parallelism is no longer a flat 50. It now scales with the machine (`4×NumCPU`, floored at 8, capped at 16). On directories with hundreds of repos this reduces peak file-descriptor pressure on macOS (default `ulimit -n` of 256) without measurably hurting throughput.
 - CodeQL workflow (`security-and-quality` query pack) running on push, PR, and a weekly schedule.
 
+### Security
+- Pinned every third-party GitHub Action to a full commit SHA (with the major version in a trailing comment) so a compromise of `actions/checkout`, `actions/setup-go`, `goreleaser/goreleaser-action`, or `golangci/golangci-lint-action` can't silently land in CI via a moved tag. Dependabot will keep the SHAs current.
+- Added explicit `permissions: contents: read` to the CI workflow (the Lint workflow already had this; the Release workflow keeps its `contents: write`).
+
 ## [0.1.2] - 2026-05-26
 
 Hardening pass: CI now exercises the race detector and runs `golangci-lint`; the codebase was scrubbed clean against the latter. README gains a project logo.
