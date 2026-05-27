@@ -174,7 +174,18 @@ make clean
 If a stuck repo seems to keep appearing, set `FOSSOR_DEBUG=1` and re-run fossor.
 Stale `.git/*.lock` files that fossor recovers are logged to
 `~/.cache/fossor/debug.log` with the repo path, lock file, and the lock's age
-at removal time.
+at removal time. More in [docs/reference/troubleshooting.md](docs/reference/troubleshooting.md).
+
+## Documentation
+
+Full docs follow the [Diátaxis](https://diataxis.fr/) framework under [`docs/`](docs/index.md):
+
+- **Tutorials** — [first-run walkthrough](docs/tutorials/first-run.md)
+- **How-To** — [bulk operations](docs/how-to/bulk-operations.md), [stashes & branches](docs/how-to/manage-stashes-and-branches.md), [external editor](docs/how-to/open-in-editor.md)
+- **Reference** — [keybindings](docs/reference/keybindings.md), [CLI flags](docs/reference/cli.md), [status states](docs/reference/status-states.md), [troubleshooting](docs/reference/troubleshooting.md)
+- **Explanation** — [architecture](docs/explanation/architecture.md), [design choices](docs/explanation/design-choices.md)
+
+See also [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CHANGELOG.md`](CHANGELOG.md), and [`SECURITY.md`](SECURITY.md).
 
 ## Tech Stack
 
