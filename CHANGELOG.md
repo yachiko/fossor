@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 - Discovery parallelism is no longer a flat 50. It now scales with the machine (`4×NumCPU`, floored at 8, capped at 16). On directories with hundreds of repos this reduces peak file-descriptor pressure on macOS (default `ulimit -n` of 256) without measurably hurting throughput.
+- CodeQL workflow (`security-and-quality` query pack) running on push, PR, and a weekly schedule.
 
 ## [0.1.2] - 2026-05-26
 
