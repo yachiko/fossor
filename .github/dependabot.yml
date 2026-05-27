@@ -1,20 +1,40 @@
 version: 2
 updates:
-  - package-ecosystem: gomod
+  - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      timezone: "Europe/Warsaw"
+    labels:
+      - "dependencies"
+    assignees:
+      - "yachiko"
     open-pull-requests-limit: 5
     groups:
-      charmbracelet:
+      go-modules:
         patterns:
-          - "github.com/charmbracelet/*"
-      x-toolkit:
-        patterns:
-          - "golang.org/x/*"
+          - "*"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
 
-  - package-ecosystem: github-actions
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      timezone: "Europe/Warsaw"
+    labels:
+      - "dependencies"
+      - "ci"
+    assignees:
+      - "yachiko"
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"

@@ -6,6 +6,13 @@
 <p align="center"><strong>A terminal UI for managing multiple Git repositories from a single screen.
 </strong></p>
 
+<p align="center">
+  <a href="https://github.com/yachiko/fossor/actions/workflows/ci.yml"><img src="https://github.com/yachiko/fossor/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/yachiko/fossor/releases"><img src="https://img.shields.io/github/v/release/yachiko/fossor" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/yachiko/fossor" alt="License"></a>
+  <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/yachiko/fossor" alt="Go version"></a>
+</p>
+
 --- 
 
 Fossor discovers git repos in a directory, shows their consolidated status (branch, commits ahead/behind, uncommitted changes), and provides a unified manage view with git operations, diff viewer, commit history, stash management, and branch operations.
