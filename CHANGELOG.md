@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`.
 - Diátaxis-structured documentation under `docs/` (tutorials, how-to, reference, explanation, plus `index.md` and `style.md`).
 
+### Changed
+- Discovery parallelism is no longer a flat 50. It now scales with the machine (`4×NumCPU`, floored at 8, capped at 16). On directories with hundreds of repos this reduces peak file-descriptor pressure on macOS (default `ulimit -n` of 256) without measurably hurting throughput.
+
 ## [0.1.2] - 2026-05-26
 
 Hardening pass: CI now exercises the race detector and runs `golangci-lint`; the codebase was scrubbed clean against the latter. README gains a project logo.
