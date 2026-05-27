@@ -42,3 +42,13 @@ type Action struct {
 func gitCmd(path string, args ...string) *exec.Cmd {
 	return exec.Command("git", append([]string{"-C", path}, args...)...)
 }
+
+// gitRefCmd builds an exec.Cmd for a git command that takes a single
+// repo-controlled or user-controlled refspec / path. The refspec is appended
+// after a `--` separator so a leading `-` cannot turn the value into a git
+// flag (e.g. `--exec=…` in git rebase, which would otherwise enable RCE).
+func gitRefCmd(path string, subArgs []string, ref string) *exec.Cmd {
+	all := append([]string{"-C", path}, subArgs...)
+	all = append(all, "--", ref)
+	return exec.Command("git", all...)
+}

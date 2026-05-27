@@ -57,7 +57,7 @@ func AllActions() []Action {
 			Category: CatBranch,
 			Enabled:  func(r git.RepoInfo) bool { return r.Branch != r.DefaultBranch },
 			BuildCmd: func(r git.RepoInfo, _ string) *exec.Cmd {
-				return gitCmd(r.Path, "switch", r.DefaultBranch)
+				return gitRefCmd(r.Path, []string{"switch"}, r.DefaultBranch)
 			},
 		},
 		{
@@ -71,7 +71,7 @@ func AllActions() []Action {
 				if input == "" {
 					return gitCmd(r.Path, "merge")
 				}
-				return gitCmd(r.Path, "merge", input)
+				return gitRefCmd(r.Path, []string{"merge"}, input)
 			},
 		},
 		{
@@ -80,7 +80,11 @@ func AllActions() []Action {
 			Category: CatBranch,
 			Enabled:  func(r git.RepoInfo) bool { return r.Branch != r.DefaultBranch },
 			BuildCmd: func(r git.RepoInfo, _ string) *exec.Cmd {
-				return gitCmd(r.Path, "rebase", r.DefaultBranch)
+				// `--` separator: prevents r.DefaultBranch from being
+				// interpreted as a git rebase flag. Without it, a poisoned
+				// .git/refs/remotes/origin/HEAD containing `--exec=<cmd>`
+				// yields RCE on key `b`.
+				return gitRefCmd(r.Path, []string{"rebase"}, r.DefaultBranch)
 			},
 		},
 		{
@@ -89,7 +93,7 @@ func AllActions() []Action {
 			Category: CatBranch,
 			Enabled:  func(r git.RepoInfo) bool { return r.Branch != r.DefaultBranch },
 			BuildCmd: func(r git.RepoInfo, _ string) *exec.Cmd {
-				return gitCmd(r.Path, "rebase", "-i", r.DefaultBranch)
+				return gitRefCmd(r.Path, []string{"rebase", "-i"}, r.DefaultBranch)
 			},
 		},
 
@@ -196,7 +200,7 @@ func AllActions() []Action {
 			InputPrompt: "Commit hash:",
 			Enabled:     always,
 			BuildCmd: func(r git.RepoInfo, input string) *exec.Cmd {
-				return gitCmd(r.Path, "cherry-pick", input)
+				return gitRefCmd(r.Path, []string{"cherry-pick"}, input)
 			},
 		},
 	}

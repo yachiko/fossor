@@ -1,6 +1,7 @@
 package manageview
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/yachiko/fossor/internal/git"
@@ -120,4 +121,93 @@ func TestAllActions(t *testing.T) {
 			t.Error("commit should be enabled when Changes>0")
 		}
 	})
+}
+
+// TestRebaseArgInjection asserts that a poisoned DefaultBranch value cannot
+// be interpreted by git as a flag. Without the `--` separator inserted by
+// gitRefCmd, `git rebase --exec=<cmd>` runs the command for every replayed
+// commit on a tracking branch — silent RCE on key `b`.
+func TestRebaseArgInjection(t *testing.T) {
+	cases := []string{
+		"--exec=echo PWNED",
+		"--exec=touch /tmp/pwn",
+		"-i",
+		"--onto",
+		"--root",
+	}
+	for _, name := range cases {
+		t.Run("DefaultBranch="+name, func(t *testing.T) {
+			actions := AllActions()
+			var rebase Action
+			for _, a := range actions {
+				if a.Key == "b" {
+					rebase = a
+					break
+				}
+			}
+			if rebase.BuildCmd == nil {
+				t.Fatal("rebase action not found")
+			}
+			cmd := rebase.BuildCmd(git.RepoInfo{Path: "/tmp/x", Branch: "feat", DefaultBranch: name}, "")
+			if cmd == nil {
+				t.Fatal("BuildCmd returned nil")
+			}
+
+			// Locate the poisoned value's index and the `--` separator.
+			args := cmd.Args
+			poisonIdx, sepIdx := -1, -1
+			for i, a := range args {
+				if a == "--" && sepIdx == -1 {
+					sepIdx = i
+				}
+				if a == name {
+					poisonIdx = i
+				}
+			}
+			if sepIdx == -1 {
+				t.Fatalf("rebase cmd lacks `--` separator: %v", args)
+			}
+			if poisonIdx == -1 {
+				t.Fatalf("rebase cmd missing DefaultBranch arg: %v", args)
+			}
+			if poisonIdx < sepIdx {
+				t.Errorf("DefaultBranch passed before `--`, would be parsed as flag: %v", args)
+			}
+		})
+	}
+}
+
+// TestRefArgSeparator asserts every action whose BuildCmd takes user/repo
+// input passes that input AFTER a `--` separator.
+func TestRefArgSeparator(t *testing.T) {
+	type refCase struct {
+		key   string
+		repo  git.RepoInfo
+		input string
+	}
+	cases := []refCase{
+		{"d", git.RepoInfo{Path: "/p", Branch: "feat", DefaultBranch: "--evil"}, ""},
+		{"m", git.RepoInfo{Path: "/p", Branch: "feat", DefaultBranch: "main"}, "--evil"},
+		{"b", git.RepoInfo{Path: "/p", Branch: "feat", DefaultBranch: "--evil"}, ""},
+		{"B", git.RepoInfo{Path: "/p", Branch: "feat", DefaultBranch: "--evil"}, ""},
+		{"k", git.RepoInfo{Path: "/p"}, "--evil"},
+	}
+	actions := AllActions()
+	byKey := make(map[string]Action, len(actions))
+	for _, a := range actions {
+		byKey[a.Key] = a
+	}
+	for _, c := range cases {
+		t.Run(c.key, func(t *testing.T) {
+			a, ok := byKey[c.key]
+			if !ok || a.BuildCmd == nil {
+				t.Skip("action not present or no BuildCmd")
+			}
+			cmd := a.BuildCmd(c.repo, c.input)
+			joined := strings.Join(cmd.Args, " ")
+			if !strings.Contains(joined, " -- ") {
+				t.Errorf("expected `--` separator in %q", joined)
+			}
+		})
+	}
 }

@@ -238,7 +238,9 @@ func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
 
 func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int, int, error) {
 	upstream := "origin/" + branch
-	out, err := g.run(ctx, path, "rev-list", "--left-right", "--count", branch+"..."+upstream)
+	// `--` separator: branch may be repo-controlled (poisoned HEAD); without
+	// the separator a leading `-` turns the refspec into a git flag.
+	out, err := g.run(ctx, path, "rev-list", "--left-right", "--count", "--", branch+"..."+upstream)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -423,7 +425,9 @@ func (g *ExecGit) RunCommand(ctx context.Context, path string, args ...string) (
 }
 
 func (g *ExecGit) SwitchBranch(ctx context.Context, path, branch string) (string, error) {
-	return g.run(ctx, path, "switch", branch)
+	// `--` separator: branch is repo-controlled when called from
+	// switchDefault* with r.DefaultBranch derived from refs/remotes/origin/HEAD.
+	return g.run(ctx, path, "switch", "--", branch)
 }
 
 func (g *ExecGit) RunShellCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {
