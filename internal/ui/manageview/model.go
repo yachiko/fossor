@@ -297,11 +297,12 @@ func (m *Model) loadBranches() tea.Cmd {
 			if len(parts) < 4 {
 				continue
 			}
+			name := git.Sanitize(parts[0])
 			bi := branchInfo{
-				Name:      parts[0],
+				Name:      name,
 				IsCurrent: parts[1] == "*",
-				LastDate:  parts[2],
-				LastMsg:   parts[3],
+				LastDate:  git.Sanitize(parts[2]),
+				LastMsg:   git.Sanitize(parts[3]),
 				Merged:    mergedSet[parts[0]],
 			}
 			// Compute ahead/behind relative to default branch

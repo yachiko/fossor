@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`.
 - Diátaxis-structured documentation under `docs/` (tutorials, how-to, reference, explanation, plus `index.md` and `style.md`).
 
+### Security
+- Strip C0/C1 control characters from repo-supplied strings (commit subjects, author names, branch refs, file paths, branch listings) before they reach the terminal. Prevents ANSI/escape-sequence injection that could spoof TUI elements or hijack the cursor. Exported `git.Sanitize` so the `manageview` branch parser can use the same helper.
+
 ## [0.1.2] - 2026-05-26
 
 Hardening pass: CI now exercises the race detector and runs `golangci-lint`; the codebase was scrubbed clean against the latter. README gains a project logo.

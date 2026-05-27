@@ -65,6 +65,31 @@ func runGitOnce(ctx context.Context, path string, args ...string) (string, error
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// Sanitize strips C0 control characters and DEL (except tab) from a string
+// before it crosses into the UI. Repo-supplied data — commit subjects, author
+// names, branch refs, file paths — can contain ANSI escape sequences that
+// would otherwise reach the terminal directly and enable UI spoofing or
+// cursor hijack. Replaces stripped bytes with '?'.
+//
+// Operates on bytes, not runes, so it also catches stray C1 controls that
+// appear as invalid UTF-8 byte sequences (a single 0x9b byte, for instance).
+func Sanitize(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\t':
+			b.WriteByte(c)
+		case c < 0x20, c == 0x7f, c >= 0x80 && c < 0xa0:
+			b.WriteByte('?')
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // staleLockThreshold is how long a *.lock file must be untouched before we
 // consider it abandoned. Package-level so tests can override it.
 var staleLockThreshold = 5 * time.Second
@@ -172,7 +197,7 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 		ref := strings.TrimSpace(string(data))
 		const prefix = "ref: refs/remotes/origin/"
 		if strings.HasPrefix(ref, prefix) {
-			return ref[len(prefix):]
+			return Sanitize(ref[len(prefix):])
 		}
 	}
 
@@ -181,7 +206,7 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 	if err == nil {
 		parts := strings.Split(out, "/")
 		if len(parts) > 0 {
-			return parts[len(parts)-1]
+			return Sanitize(parts[len(parts)-1])
 		}
 	}
 
@@ -196,7 +221,11 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 }
 
 func (g *ExecGit) GetBranch(ctx context.Context, path string) (string, error) {
-	return g.run(ctx, path, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := g.run(ctx, path, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return Sanitize(out), nil
 }
 
 func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
@@ -204,7 +233,7 @@ func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return out, nil
+	return Sanitize(out), nil
 }
 
 func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int, int, error) {
@@ -259,7 +288,7 @@ func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, er
 		changes = append(changes, ChangeInfo{
 			Staged:      line[0],
 			Unstaged:    line[1],
-			Path:        p,
+			Path:        Sanitize(p),
 			IsSubmodule: submodulePaths[p],
 		})
 	}
@@ -335,7 +364,7 @@ func (g *ExecGit) getStatusInfo(ctx context.Context, path string) (struct {
 		}
 		switch {
 		case strings.HasPrefix(line, "# branch.head "):
-			r.branch = line[len("# branch.head "):]
+			r.branch = Sanitize(line[len("# branch.head "):])
 		case strings.HasPrefix(line, "# branch.ab "):
 			// Format: # branch.ab +N -M
 			parts := strings.Fields(line)
@@ -368,9 +397,9 @@ func (g *ExecGit) GetLog(ctx context.Context, path string, n int) ([]CommitInfo,
 		commits = append(commits, CommitInfo{
 			Hash:    lines[i],
 			Short:   lines[i+1],
-			Author:  lines[i+2],
+			Author:  Sanitize(lines[i+2]),
 			Date:    date,
-			Subject: lines[i+4],
+			Subject: Sanitize(lines[i+4]),
 		})
 	}
 	return commits, nil

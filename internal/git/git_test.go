@@ -231,6 +231,87 @@ func TestComputeStatus(t *testing.T) {
 	}
 }
 
+func TestSanitize(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"plain ascii", "plain ascii"},
+		{"with\ttab", "with\ttab"},
+		{"esc \x1b[2J clear", "esc ?[2J clear"},
+		{"bel\x07 newline\n cr\r", "bel? newline? cr?"},
+		{"del\x7f", "del?"},
+		{"C1 \x9bevil", "C1 ?evil"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := Sanitize(c.in); got != c.want {
+			t.Errorf("Sanitize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestGetLogSanitizesCommitFields(t *testing.T) {
+	dir := setupTestRepo(t)
+	// Plant a commit with ANSI escape in subject and author.
+	cmds := [][]string{
+		{"git", "config", "user.email", "evil@example.com"},
+		{"git", "config", "user.name", "Mal\x1b[31mlory"},
+		{"git", "commit", "--allow-empty", "-m", "subject \x1b[2J\x1b[H pwned"},
+	}
+	for _, args := range cmds {
+		c := exec.Command(args[0], args[1:]...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("setup %v: %s: %v", args, out, err)
+		}
+	}
+	g := NewExecGit()
+	commits, err := g.GetLog(context.Background(), dir, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("GetLog: err=%v len=%d", err, len(commits))
+	}
+	if containsControl(commits[0].Subject) {
+		t.Errorf("Subject still contains control chars: %q", commits[0].Subject)
+	}
+	if containsControl(commits[0].Author) {
+		t.Errorf("Author still contains control chars: %q", commits[0].Author)
+	}
+}
+
+func TestDetectDefaultBranchSanitizesPoisonedHEAD(t *testing.T) {
+	dir := setupTestRepo(t)
+	// Plant a poisoned refs/remotes/origin/HEAD whose ref name is an arg-injection payload.
+	headPath := filepath.Join(dir, ".git", "refs", "remotes", "origin")
+	if err := os.MkdirAll(headPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	const poisoned = "ref: refs/remotes/origin/--exec=\x1b[Aevil\n"
+	if err := os.WriteFile(filepath.Join(headPath, "HEAD"), []byte(poisoned), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := NewExecGit()
+	got := g.DetectDefaultBranch(context.Background(), dir)
+	if containsControl(got) {
+		t.Errorf("DetectDefaultBranch returned control chars: %q", got)
+	}
+	// Note: the leading "--" is intentionally still allowed through here; PR-2
+	// addresses that with the -- separator on the consumer side.
+}
+
+// containsControl reports whether s contains any C0/C1 control byte or DEL.
+func containsControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\t' {
+			continue
+		}
+		if c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLooksLikeLockError(t *testing.T) {
 	tests := []struct {
 		stderr string
