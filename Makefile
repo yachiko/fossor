@@ -3,7 +3,7 @@ MODULE := github.com/yachiko/fossor
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/cmd.Version=$(VERSION)
 
-.PHONY: build run test vet lint clean install deps update testdata testdata-reset
+.PHONY: build run test vet lint clean install deps update testdata testdata-reset tag
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
@@ -42,3 +42,20 @@ testdata-reset:
 
 check: vet test build
 	@echo "Build OK"
+
+tag: ## Create and push next patch version tag (vX.Y.(Z+1))
+	@set -e; \
+	last=$$(git tag --list 'v*' --sort=-v:refname | head -1); \
+	if [ -z "$$last" ]; then \
+	  new="v0.0.1"; \
+	else \
+	  ver=$${last#v}; \
+	  major=$${ver%%.*}; rest=$${ver#*.}; minor=$${rest%%.*}; patch=$${rest#*.}; \
+	  patch=$$((patch+1)); \
+	  new="v$$major.$$minor.$$patch"; \
+	fi; \
+	echo "Last tag: $$last"; \
+	echo "New tag: $$new"; \
+	git tag $$new; \
+	git push origin $$new; \
+	echo "✅ Created and pushed $$new"
