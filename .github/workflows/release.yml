@@ -28,6 +28,19 @@ jobs:
 
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac  # v3
 
+      # Mint a short-lived installation token for the yachiko-homebrew-bot
+      # App, scoped to yachiko/homebrew-tap. GoReleaser uses it to commit
+      # the generated formula into the tap repo. The default GITHUB_TOKEN
+      # cannot push outside this repo, hence the App.
+      - name: Mint Homebrew tap token
+        id: tap-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859  # v3
+        with:
+          client-id: ${{ secrets.HOMEBREW_TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: yachiko
+          repositories: homebrew-tap
+
       - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89  # v7.2.2
         with:
           distribution: goreleaser
@@ -35,6 +48,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
 
       - name: Capture artifact hashes for provenance
         id: hash
