@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Strip C0/C1 control characters from repo-supplied strings (commit subjects, author names, branch refs, file paths, branch listings) before they reach the terminal. Prevents ANSI/escape-sequence injection that could spoof TUI elements or hijack the cursor. Exported `git.Sanitize` so the `manageview` branch parser can use the same helper.
 - **Fix RCE in rebase action via poisoned `DefaultBranch` (F1/F2).** Every git command that passes a repo- or user-controlled refspec now inserts a `--` separator before the value. Previously, a poisoned `.git/refs/remotes/origin/HEAD` containing `ref: refs/remotes/origin/--exec=<cmd>` allowed silent command execution when the user pressed `b` (rebase) or `B` (rebase -i) on a tracking branch with commits ahead — `git rebase --exec=<cmd>` runs `<cmd>` after every replayed commit. Same defense applied to: `git switch`, `git rev-list`, `git merge`, `git cherry-pick`, `git branch --merged`, `git branch -m / -d / -D`, and the `git branch <name>` branch-create path. Added a regression test exercising every affected action.
 
+### Changed
+- Discovery parallelism is no longer a flat 50. It now scales with the machine (`4×NumCPU`, floored at 8, capped at 16). On directories with hundreds of repos this reduces peak file-descriptor pressure on macOS (default `ulimit -n` of 256) without measurably hurting throughput.
+
 ## [0.1.2] - 2026-05-26
 
 Hardening pass: CI now exercises the race detector and runs `golangci-lint`; the codebase was scrubbed clean against the latter. README gains a project logo.
