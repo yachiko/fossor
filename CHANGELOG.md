@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`.
 - Diátaxis-structured documentation under `docs/` (tutorials, how-to, reference, explanation, plus `index.md` and `style.md`).
+- Keyless cosign signing of `checksums.txt` on every release (Rekor-backed; verify via `cosign verify-blob`).
+- SLSA v1.0 build provenance attestation for every release artifact (`multiple.intoto.jsonl`; verify via `slsa-verifier`).
+- `SECURITY.md` now documents the cosign + SLSA verification flow with copy-pasteable commands.
 
 ## [0.1.2] - 2026-05-26
 

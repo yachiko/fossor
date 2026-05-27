@@ -49,3 +49,45 @@ Fossor does not perform authentication. It assumes your git credentials are conf
 - All git invocations run with `exec.CommandContext` so they respect cancellation when the TUI shuts down.
 - Bulk pull/fetch parallelism is capped at 8 to avoid resource exhaustion when scanning hundreds of repos.
 - Stale-lock removal is gated behind both an mtime threshold and a `lsof` holder check; PRs that tighten this further are welcome.
+
+## Verifying a Release
+
+Every tagged release ships:
+
+- Platform archives (`.tar.gz` / `.zip`) for linux/darwin × amd64/arm64 and windows/amd64.
+- A `checksums.txt` listing the SHA-256 of every archive.
+- A keyless [cosign](https://github.com/sigstore/cosign) signature of `checksums.txt` (`checksums.txt.sig` + `checksums.txt.pem`), recorded in the Rekor transparency log.
+- A [SLSA v1.0](https://slsa.dev/) build provenance attestation (`*.intoto.jsonl`) covering all artifacts.
+
+### Verify with cosign
+
+```bash
+TAG=v0.1.2   # adjust
+curl -sLO https://github.com/yachiko/fossor/releases/download/${TAG}/checksums.txt
+curl -sLO https://github.com/yachiko/fossor/releases/download/${TAG}/checksums.txt.sig
+curl -sLO https://github.com/yachiko/fossor/releases/download/${TAG}/checksums.txt.pem
+
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp "https://github.com/yachiko/fossor/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+```
+
+Then verify the archive you downloaded against `checksums.txt`:
+
+```bash
+sha256sum -c checksums.txt --ignore-missing
+```
+
+### Verify SLSA provenance
+
+```bash
+# Install slsa-verifier: https://github.com/slsa-framework/slsa-verifier
+slsa-verifier verify-artifact \
+  --provenance-path multiple.intoto.jsonl \
+  --source-uri github.com/yachiko/fossor \
+  --source-tag ${TAG} \
+  fossor_0.1.2_linux_amd64.tar.gz
+```
