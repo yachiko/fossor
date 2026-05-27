@@ -42,6 +42,22 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Keyless cosign signing of the checksums file. Produces a .pem
+# certificate and a .sig signature alongside checksums.txt. Verifiable
+# against the Rekor transparency log without needing a managed key.
+# Requires `id-token: write` permission on the release workflow.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - "sign-blob"
+      - "--yes"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
