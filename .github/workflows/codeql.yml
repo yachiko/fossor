@@ -1,0 +1,42 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan so newly disclosed queries pick up regressions
+    # even when there's no recent push.
+    - cron: "27 7 * * 1"
+
+permissions:
+  contents: read
+  security-events: write   # required to upload SARIF results
+
+jobs:
+  analyze:
+    name: Analyze (Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@fee9466b8957867761f2d78f922ab084e3e2dd17   # v3
+        with:
+          languages: go
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@fee9466b8957867761f2d78f922ab084e3e2dd17   # v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@fee9466b8957867761f2d78f922ab084e3e2dd17   # v3
+        with:
+          category: "/language:go"
