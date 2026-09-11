@@ -152,7 +152,9 @@ func TestDiscovery(t *testing.T) {
 
 	var found []string
 	for result := range ch {
-		found = append(found, result.Repo.Name)
+		if result.Local {
+			found = append(found, result.Repo.Name)
+		}
 	}
 
 	if len(found) != 3 {

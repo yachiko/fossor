@@ -38,7 +38,10 @@ type App struct {
 	discovering  bool
 	discovered   int
 	liveRepos    map[string]git.RepoInfo
-	discoveryCtx context.Context
+	localRepos   map[string]git.RepoInfo
+	localDone    bool
+	refreshTotal int
+	refreshDone  int
 	spinner      spinner.Model
 	cancelCtx    context.CancelFunc
 	cancelled    bool
@@ -109,50 +112,53 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case common.RepoDiscoveredMsg:
-		if msg.Refreshing {
-			a.mainScreen.SetVerification(msg.Path, mainscreen.Refreshing)
-			return a, waitForDiscovery(msg.Ch, true)
-		}
-		if !a.coordinator.IsCurrent(msg.Path, msg.Revision) {
-			return a, waitForDiscovery(msg.Ch, msg.RefreshPhase)
-		}
-		if !msg.RefreshPhase {
+		if msg.Local {
 			a.discovered++
+			a.localRepos[msg.Repo.Path] = msg.Repo
+			a.liveRepos[msg.Repo.Path] = msg.Repo
+			a.mainScreen.UpdateRepo(msg.Repo)
+			if a.noFetch {
+				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
+			} else {
+				a.refreshTotal++
+				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Unverified)
+			}
+			a.mainScreen.SetStatus(a.scanStatus())
+			return a, waitForDiscovery(msg.Ch)
 		}
-		a.liveRepos[msg.Repo.Path] = msg.Repo
-		a.mainScreen.UpdateRepo(msg.Repo)
-		if msg.FetchErr != nil && msg.Repo.Status != git.StatusError {
-			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
+		a.refreshDone++
+		if !msg.Skipped && a.coordinator.IsCurrent(msg.Path, msg.Revision) {
+			a.liveRepos[msg.Repo.Path] = msg.Repo
+			a.mainScreen.UpdateRepo(msg.Repo)
+			if msg.FetchErr != nil {
+				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
+			} else {
+				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
+			}
+		}
+		if a.localDone {
+			a.mainScreen.SetStatus(a.refreshStatus())
 		} else {
-			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
+			a.mainScreen.SetStatus(a.scanStatus())
 		}
-		if msg.RefreshPhase {
-			a.mainScreen.SetStatus(fmt.Sprintf("%s Refreshing remotes...", a.spinner.View()))
-		} else {
-			a.mainScreen.SetStatus(fmt.Sprintf("%s Scanning... (%d repos found)", a.spinner.View(), a.discovered))
-		}
-		return a, waitForDiscovery(msg.Ch, msg.RefreshPhase)
+		return a, waitForDiscovery(msg.Ch)
 
 	case common.DiscoveryCompleteMsg:
-		if msg.Complete && !a.cancelled {
-			paths := make(map[string]bool, len(a.liveRepos))
-			for path := range a.liveRepos {
-				paths[path] = true
+		if msg.LocalDone && !a.cancelled {
+			a.finishLocalScan()
+			if !a.noFetch {
+				a.mainScreen.SetStatus(a.refreshStatus())
 			}
-			a.mainScreen.Prune(paths)
-			repos := make([]git.RepoInfo, 0, len(a.liveRepos))
-			for _, repo := range a.liveRepos {
-				repos = append(repos, repo)
-			}
-			git.SaveDiscoveryCache(a.rootDir, a.recursive, repos)
+			return a, waitForDiscovery(msg.Ch)
 		}
-		if msg.Refreshing || a.noFetch || a.cancelled {
+		if msg.Complete {
+			if !a.localDone && !a.cancelled {
+				a.finishLocalScan()
+			}
 			a.discovering = false
 			a.mainScreen.SetStatus(fmt.Sprintf("Scan complete: %d repos", a.discovered))
 			return a, a.scheduleClearStatus()
 		}
-		a.mainScreen.SetStatus(fmt.Sprintf("%s Refreshing remotes...", a.spinner.View()))
-		return a, a.startRefresh()
 
 	case common.SwitchToManageMsg:
 		fm := manageview.New(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified)
@@ -237,6 +243,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case common.StatusClearMsg:
+		if a.refreshDone < a.refreshTotal {
+			return a, nil
+		}
 		a.mainScreen.SetStatus("")
 		if a.manageModel != nil {
 			a.manageModel.SetStatus("")
@@ -285,30 +294,49 @@ func (a *App) startDiscovery() tea.Cmd {
 	a.discovered = 0
 	a.cancelled = false
 	a.liveRepos = make(map[string]git.RepoInfo)
+	a.localRepos = make(map[string]git.RepoInfo)
+	a.localDone = false
+	a.refreshTotal = 0
+	a.refreshDone = 0
 
 	ctx, cancel := context.WithCancel(context.Background())
-	a.discoveryCtx = ctx
 	a.cancelCtx = cancel
 	for _, repo := range git.LoadDiscoveryCache(a.rootDir, a.recursive) {
 		a.mainScreen.AddCachedRepo(repo)
 	}
 
 	opts := git.DiscoveryOptions{
-		RootDir:   a.rootDir,
-		Recursive: a.recursive,
-		Git:       a.git,
+		RootDir:     a.rootDir,
+		Recursive:   a.recursive,
+		Git:         a.git,
+		Fetch:       !a.noFetch,
+		Coordinator: a.coordinator,
 	}
 
 	ch := git.Discover(ctx, opts)
-	return waitForDiscovery(ch, false)
+	return waitForDiscovery(ch)
 }
 
-func (a *App) startRefresh() tea.Cmd {
-	repos := make([]git.RepoInfo, 0, len(a.liveRepos))
-	for _, repo := range a.liveRepos {
+func (a *App) refreshStatus() string {
+	return fmt.Sprintf("%s Refreshing remotes: %d/%d", a.spinner.View(), a.refreshDone, a.refreshTotal)
+}
+
+func (a *App) scanStatus() string {
+	return fmt.Sprintf("%s Scanning... (%d repos found; refreshing %d/%d)", a.spinner.View(), a.discovered, a.refreshDone, a.refreshTotal)
+}
+
+func (a *App) finishLocalScan() {
+	a.localDone = true
+	paths := make(map[string]bool, len(a.localRepos))
+	for path := range a.localRepos {
+		paths[path] = true
+	}
+	a.mainScreen.Prune(paths)
+	repos := make([]git.RepoInfo, 0, len(a.localRepos))
+	for _, repo := range a.localRepos {
 		repos = append(repos, repo)
 	}
-	return waitForDiscovery(git.RefreshDiscovered(a.discoveryCtx, repos, a.git, a.coordinator), true)
+	git.SaveDiscoveryCache(a.rootDir, a.recursive, repos)
 }
 
 func (a *App) scheduleAutoRefresh() tea.Cmd {
@@ -324,12 +352,15 @@ func (a *App) scheduleClearStatus() tea.Cmd {
 }
 
 // waitForDiscovery reads one result from the channel and returns it as a message.
-func waitForDiscovery(ch <-chan git.DiscoveryResult, refreshing bool) tea.Cmd {
+func waitForDiscovery(ch <-chan git.DiscoveryResult) tea.Cmd {
 	return func() tea.Msg {
 		result, ok := <-ch
 		if !ok {
-			return common.DiscoveryCompleteMsg{Complete: true, Refreshing: refreshing}
+			return common.DiscoveryCompleteMsg{Complete: true}
 		}
-		return common.RepoDiscoveredMsg{Repo: result.Repo, FetchErr: result.FetchErr, Path: result.Path, Refreshing: result.Refreshing, RefreshPhase: refreshing, Revision: result.Revision, Ch: ch}
+		if result.LocalDone {
+			return common.DiscoveryCompleteMsg{LocalDone: true, Ch: ch}
+		}
+		return common.RepoDiscoveredMsg{Repo: result.Repo, FetchErr: result.FetchErr, Path: result.Path, Skipped: result.Skipped, Revision: result.Revision, Local: result.Local, Ch: ch}
 	}
 }

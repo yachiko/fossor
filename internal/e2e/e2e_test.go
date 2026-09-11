@@ -469,7 +469,9 @@ func TestE2E_Discovery(t *testing.T) {
 
 	found := make(map[string]bool)
 	for result := range ch {
-		found[result.Repo.Name] = true
+		if result.Local {
+			found[result.Repo.Name] = true
+		}
 	}
 
 	for _, name := range names {

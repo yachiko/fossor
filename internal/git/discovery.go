@@ -5,150 +5,208 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 )
 
-// defaultConcurrency caps the number of in-flight per-repo git invocations
-// during discovery. Picked at startup to scale with the machine: 4×NumCPU
-// keeps the box busy on I/O-bound git fetches without exhausting the
-// default file-descriptor budget (typically 256 on macOS, 1024 on Linux)
-// when scanning hundreds of repos. Floor of 8, ceiling of 16 — past 16 we
-// hit diminishing returns and start trading throughput for FD pressure.
-var defaultConcurrency = discoveryConcurrency()
-
-func discoveryConcurrency() int {
-	n := runtime.NumCPU() * 4
-	if n < 8 {
-		n = 8
-	}
-	if n > 16 {
-		n = 16
-	}
-	return n
-}
+const (
+	localStatusWorkers = 8
+	fetchWorkers       = 16
+)
 
 // DiscoveryResult carries a discovered repo or indicates completion.
 type DiscoveryResult struct {
-	Repo       RepoInfo
-	FetchErr   error
-	Path       string
-	Refreshing bool
-	Revision   uint64
+	Repo      RepoInfo
+	FetchErr  error
+	Path      string
+	Skipped   bool
+	Revision  uint64
+	Local     bool
+	LocalDone bool
 }
 
 // DiscoveryOptions configures discovery behavior.
 type DiscoveryOptions struct {
-	RootDir   string
-	Recursive bool
-	Git       Git
+	RootDir     string
+	Recursive   bool
+	Git         Git
+	Fetch       bool
+	Coordinator *OperationCoordinator
 }
 
-// Discover scans for git repositories and streams results on the returned channel.
-// The channel is closed when discovery is complete.
+// Discover streams each local status before queuing its optional remote refresh.
+// LocalDone marks the complete local snapshot; the channel closes only after all
+// queued refreshes have produced a terminal result.
 func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult {
 	ch := make(chan DiscoveryResult, 32)
 
 	go func() {
 		defer close(ch)
-
 		repoPaths := findRepos(ctx, opts.RootDir, opts.Recursive)
+		paths := make(chan string)
+		var refreshInput chan RepoInfo
+		refreshes := make(chan RepoInfo)
+		var localWG, fetchWG, schedulerWG sync.WaitGroup
 
-		sem := make(chan struct{}, defaultConcurrency)
-		var wg sync.WaitGroup
-
-		for _, repoPath := range repoPaths {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			wg.Add(1)
-			sem <- struct{}{}
-
-			go func(rp string) {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				info, err := opts.Git.GetRepoInfo(ctx, rp)
-				if err != nil {
-					return
+		for range localStatusWorkers {
+			localWG.Add(1)
+			go func() {
+				defer localWG.Done()
+				for path := range paths {
+					info, err := opts.Git.GetRepoInfo(ctx, path)
+					if err != nil {
+						continue
+					}
+					if !sendDiscovery(ctx, ch, DiscoveryResult{Repo: info, Path: path, Local: true}) {
+						return
+					}
+					if opts.Fetch && !sendRepo(ctx, refreshInput, info) {
+						return
+					}
 				}
-
-				select {
-				case ch <- DiscoveryResult{Repo: info, Path: rp}:
-				case <-ctx.Done():
-				}
-			}(repoPath)
+			}()
 		}
 
-		wg.Wait()
+		if opts.Fetch {
+			refreshInput = make(chan RepoInfo)
+			for range fetchWorkers {
+				fetchWG.Add(1)
+				go func() {
+					defer fetchWG.Done()
+					for local := range refreshes {
+						result := refreshRepo(ctx, local, opts.Git, opts.Coordinator)
+						if !sendDiscovery(ctx, ch, result) {
+							return
+						}
+					}
+				}()
+			}
+			schedulerWG.Add(1)
+			go func() {
+				defer schedulerWG.Done()
+				dispatchRefreshes(ctx, refreshInput, refreshes)
+			}()
+		}
+
+		for _, path := range repoPaths {
+			if !sendPath(ctx, paths, path) {
+				close(paths)
+				localWG.Wait()
+				if opts.Fetch {
+					close(refreshInput)
+					schedulerWG.Wait()
+					fetchWG.Wait()
+				}
+				return
+			}
+		}
+		close(paths)
+		localWG.Wait()
+		if !sendDiscovery(ctx, ch, DiscoveryResult{LocalDone: true}) {
+			if opts.Fetch {
+				close(refreshInput)
+				schedulerWG.Wait()
+				fetchWG.Wait()
+			}
+			return
+		}
+		if opts.Fetch {
+			close(refreshInput)
+			schedulerWG.Wait()
+			fetchWG.Wait()
+		}
 	}()
 
 	return ch
 }
 
-// RefreshDiscovered fetches the supplied repositories and streams refreshed
-// status. It is intentionally separate from Discover so local status is
-// available before any network operation begins.
-func RefreshDiscovered(ctx context.Context, repos []RepoInfo, g Git, coordinator *OperationCoordinator) <-chan DiscoveryResult {
-	ch := make(chan DiscoveryResult, 32)
-
-	go func() {
-		defer close(ch)
-
-		sem := make(chan struct{}, defaultConcurrency)
-		var wg sync.WaitGroup
-		for _, repo := range repos {
-			select {
-			case <-ctx.Done():
-				return
-			default:
+// dispatchRefreshes decouples local status workers from slow remote operations
+// while keeping the number of active fetches bounded by fetchWorkers.
+func dispatchRefreshes(ctx context.Context, input <-chan RepoInfo, workers chan<- RepoInfo) {
+	defer close(workers)
+	var pending []RepoInfo
+	for input != nil || len(pending) > 0 {
+		// Prefer accepting an already-waiting local result over dispatching another
+		// fetch so remote backpressure cannot starve local discovery.
+		select {
+		case repo, ok := <-input:
+			if !ok {
+				input = nil
+			} else {
+				pending = append(pending, repo)
 			}
-
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(local RepoInfo) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				rp := local.Path
-
-				select {
-				case ch <- DiscoveryResult{Path: rp, Refreshing: true}:
-				case <-ctx.Done():
-					return
-				}
-
-				var revision uint64
-				var fetchErr error
-				if coordinator != nil {
-					var ran bool
-					revision, ran, fetchErr = coordinator.Run(ctx, rp, false, func(ctx context.Context) error {
-						return g.Fetch(ctx, rp)
-					})
-					if !ran {
-						return
-					}
-				} else {
-					fetchErr = g.Fetch(ctx, rp)
-				}
-
-				info, err := g.GetRepoInfo(ctx, rp)
-				if err != nil {
-					info = local
-					fetchErr = errors.Join(fetchErr, err)
-				}
-				select {
-				case ch <- DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision}:
-				case <-ctx.Done():
-				}
-			}(repo)
+			continue
+		default:
 		}
-		wg.Wait()
-	}()
 
-	return ch
+		var output chan<- RepoInfo
+		var next RepoInfo
+		if len(pending) > 0 {
+			output = workers
+			next = pending[0]
+		}
+		select {
+		case repo, ok := <-input:
+			if !ok {
+				input = nil
+			} else {
+				pending = append(pending, repo)
+			}
+		case output <- next:
+			pending = pending[1:]
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *OperationCoordinator) DiscoveryResult {
+	rp := local.Path
+	var revision uint64
+	var fetchErr error
+	if coordinator != nil {
+		var ran bool
+		revision, ran, fetchErr = coordinator.Run(ctx, rp, false, func(ctx context.Context) error {
+			return g.Fetch(ctx, rp)
+		})
+		if !ran {
+			return DiscoveryResult{Path: rp, Skipped: true, Revision: revision}
+		}
+	} else {
+		fetchErr = g.Fetch(ctx, rp)
+	}
+	info, err := g.GetRepoInfo(ctx, rp)
+	if err != nil {
+		info = local
+		fetchErr = errors.Join(fetchErr, err)
+	}
+	return DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision}
+}
+
+func sendDiscovery(ctx context.Context, ch chan<- DiscoveryResult, result DiscoveryResult) bool {
+	select {
+	case ch <- result:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func sendPath(ctx context.Context, ch chan<- string, path string) bool {
+	select {
+	case ch <- path:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func sendRepo(ctx context.Context, ch chan<- RepoInfo, repo RepoInfo) bool {
+	select {
+	case ch <- repo:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // findRepos returns paths to directories containing .git.

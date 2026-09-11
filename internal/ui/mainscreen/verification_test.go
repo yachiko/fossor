@@ -1,6 +1,7 @@
 package mainscreen
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/yachiko/fossor/internal/git"
@@ -52,16 +53,28 @@ func TestBulkOperationsIgnoreUnverifiedRows(t *testing.T) {
 	}
 }
 
-func TestRefreshingRowsRemainVisibleButNotActionable(t *testing.T) {
+func TestRemoteErrorsMatchOnlyTheErrorFilter(t *testing.T) {
 	m := New(nil, "", "")
-	repo := git.RepoInfo{Path: "/refreshing", Status: git.StatusBehind}
+	repo := git.RepoInfo{Path: "/remote-error", Status: git.StatusBehind}
 	m.UpdateRepo(repo)
-	m.SetVerification(repo.Path, Refreshing)
-	if m.IsActionable(repo) {
-		t.Error("refreshing repo is actionable")
+	m.SetVerification(repo.Path, RemoteError)
+	m.filterMode = FilterError
+	if !m.matchesFilter(repo) {
+		t.Error("remote error did not match the error filter")
 	}
 	m.filterMode = FilterBehind
+	if m.matchesFilter(repo) {
+		t.Error("remote error matched its retained local status filter")
+	}
+	m.filterMode = FilterAll
 	if !m.matchesFilter(repo) {
-		t.Error("refreshing repo did not match its local status filter")
+		t.Error("remote error did not match the all filter")
+	}
+	m.cycleFilter()
+	if m.filterMode != FilterError {
+		t.Errorf("filter = %v, want Error", m.filterMode)
+	}
+	if !strings.Contains(m.statusCountsView(), "1 error") {
+		t.Errorf("status counts = %q, want one error", m.statusCountsView())
 	}
 }

@@ -5,19 +5,20 @@ import "github.com/yachiko/fossor/internal/git"
 // RepoDiscoveredMsg is sent when a repo is discovered during scanning.
 // It carries the channel so the listener can re-subscribe.
 type RepoDiscoveredMsg struct {
-	Repo         git.RepoInfo
-	FetchErr     error
-	Path         string
-	Refreshing   bool
-	RefreshPhase bool
-	Revision     uint64
-	Ch           <-chan git.DiscoveryResult
+	Repo     git.RepoInfo
+	FetchErr error
+	Path     string
+	Skipped  bool
+	Revision uint64
+	Local    bool
+	Ch       <-chan git.DiscoveryResult
 }
 
 // DiscoveryCompleteMsg is sent when repo discovery finishes.
 type DiscoveryCompleteMsg struct {
-	Complete   bool
-	Refreshing bool
+	Complete  bool
+	LocalDone bool
+	Ch        <-chan git.DiscoveryResult
 }
 
 // RepoUpdatedMsg is sent after a repo operation completes (pull, fetch, etc).

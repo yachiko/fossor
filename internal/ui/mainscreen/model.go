@@ -51,7 +51,6 @@ type VerificationState int
 
 const (
 	Unverified VerificationState = iota
-	Refreshing
 	Verified
 	RemoteError
 )
@@ -234,8 +233,12 @@ func (m *Model) refilter() {
 }
 
 func (m *Model) matchesFilter(r git.RepoInfo) bool {
-	if m.Verification(r.Path) == Unverified || m.Verification(r.Path) == RemoteError {
+	verification := m.Verification(r.Path)
+	if verification == Unverified {
 		return false
+	}
+	if verification == RemoteError {
+		return m.filterMode == FilterAll || m.filterMode == FilterError
 	}
 	switch m.filterMode {
 	case FilterError:
@@ -261,7 +264,12 @@ func (m *Model) matchesFilter(r git.RepoInfo) bool {
 func (m *Model) cycleFilter() {
 	counts := make(map[git.RepoStatus]int)
 	for _, r := range m.Repos {
-		if m.Verification(r.Path) == Unverified || m.Verification(r.Path) == RemoteError {
+		verification := m.Verification(r.Path)
+		if verification == Unverified {
+			continue
+		}
+		if verification == RemoteError {
+			counts[git.StatusError]++
 			continue
 		}
 		counts[r.Status]++
