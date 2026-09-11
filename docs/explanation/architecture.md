@@ -76,9 +76,11 @@ The Tea `Cmd` that wraps the channel is re-issued on every received message, so 
 
 Inside the `git` wrapper, every command is run through `runGitOnce`. On failure, the error message is matched against a small set of well-known lock-error markers; if any match, `tryClearStaleLocks` checks each well-known `.git/*.lock` file's mtime and (when `lsof` is available) holder process, removes the lock, and retries the original command once. See `SECURITY.md` for the threat-model framing.
 
-## Why No State File
+## Discovery Cache
 
-Fossor is stateless: no config file, no on-disk cache (besides the optional debug log). Every run rediscovers. This keeps the install/uninstall story trivial — `go install` and `rm ~/go/bin/fossor` are the entire lifecycle.
+Fossor has no configuration file. It stores the last complete, non-cancelled discovery snapshot in `~/.cache/fossor/repositories.json`, keyed by absolute root and recursive mode. The versioned JSON file is private and atomically replaced. Read and write failures are ignored, so the cache never prevents startup or discovery.
+
+Cached rows are hydrated synchronously as unverified and change to checking only while their live refresh runs. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents are local repository metadata only; remote state is always refreshed by the live scan unless `--no-fetch` is used.
 
 ## See Also
 

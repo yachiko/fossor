@@ -156,7 +156,7 @@ func (m *Model) renderActionGrid() string {
 			if action.Category != cat {
 				continue
 			}
-			enabled := action.Enabled(m.Repo)
+			enabled := action.Enabled(m.Repo) && (m.verified || action.Name == "pull" || action.Name == "fetch")
 			if enabled {
 				ks := enabledKeyStyle
 				if action.Dangerous {

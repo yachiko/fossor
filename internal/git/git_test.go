@@ -147,7 +147,6 @@ func TestDiscovery(t *testing.T) {
 	ch := Discover(context.Background(), DiscoveryOptions{
 		RootDir:   root,
 		Recursive: false,
-		NoFetch:   true,
 		Git:       g,
 	})
 

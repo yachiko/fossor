@@ -41,7 +41,7 @@ Single hub for all Fossor documentation following the Diátaxis framework.
 
 ## Conventions
 
-- Fossor is **stateless**: no config file, no on-disk state beyond the optional `~/.cache/fossor/debug.log`. Every run rediscovers.
+- Fossor has no configuration file. It keeps the last complete discovery snapshot in `~/.cache/fossor/repositories.json` so rows can appear immediately on the next launch; every run still performs a live discovery.
 - Fossor shells out to the system `git` binary. Your `~/.gitconfig`, credential helpers, and `$EDITOR` are all honored as-is.
 - Bulk operations are concurrency-capped at 8 to keep behavior predictable on directories with hundreds of repos.
 

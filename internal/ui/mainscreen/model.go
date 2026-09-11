@@ -46,10 +46,21 @@ func (f FilterMode) String() string {
 	return "All"
 }
 
+// VerificationState is UI metadata, deliberately separate from git.RepoStatus.
+type VerificationState int
+
+const (
+	Unverified VerificationState = iota
+	Refreshing
+	Verified
+	RemoteError
+)
+
 // Model is the main screen model.
 type Model struct {
 	Repos        []git.RepoInfo
 	Git          git.Git
+	Coordinator  *git.OperationCoordinator
 	RootDir      string
 	OpenCmd      string
 	cursor       int
@@ -63,22 +74,28 @@ type Model struct {
 	width        int
 	height       int
 	statusMsg    string
+	verification map[string]VerificationState
 }
 
 // New creates a new main screen model.
-func New(g git.Git, rootDir, openCmd string) Model {
+func New(g git.Git, rootDir, openCmd string, coordinators ...*git.OperationCoordinator) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search repos..."
 	ti.CharLimit = 100
 
-	return Model{
-		Git:        g,
-		RootDir:    rootDir,
-		OpenCmd:    openCmd,
-		sortCol:    SortName,
-		sortAsc:    true,
-		searchText: ti,
+	m := Model{
+		Git:          g,
+		RootDir:      rootDir,
+		OpenCmd:      openCmd,
+		sortCol:      SortName,
+		sortAsc:      true,
+		searchText:   ti,
+		verification: make(map[string]VerificationState),
 	}
+	if len(coordinators) > 0 {
+		m.Coordinator = coordinators[0]
+	}
+	return m
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -131,6 +148,42 @@ func (m *Model) UpdateRepo(repo git.RepoInfo) {
 	m.refilter()
 }
 
+// AddCachedRepo hydrates a persisted row without treating it as live state.
+func (m *Model) AddCachedRepo(repo git.RepoInfo) {
+	m.UpdateRepo(repo)
+	m.verification[repo.Path] = Unverified
+}
+
+func (m *Model) SetVerification(path string, state VerificationState) {
+	m.verification[path] = state
+}
+
+// Prune removes rows and verification metadata absent from a completed scan.
+func (m *Model) Prune(paths map[string]bool) {
+	kept := m.Repos[:0]
+	for _, repo := range m.Repos {
+		if paths[repo.Path] {
+			kept = append(kept, repo)
+		} else {
+			delete(m.verification, repo.Path)
+		}
+	}
+	m.Repos = kept
+	m.refilter()
+	m.clampCursor()
+}
+
+func (m *Model) Verification(path string) VerificationState {
+	if state, ok := m.verification[path]; ok {
+		return state
+	}
+	return Verified
+}
+
+func (m *Model) IsActionable(repo git.RepoInfo) bool {
+	return m.Verification(repo.Path) == Verified
+}
+
 // SelectedRepo returns the currently selected repo, if any.
 func (m *Model) SelectedRepo() (git.RepoInfo, bool) {
 	indices := m.visibleIndices()
@@ -181,6 +234,9 @@ func (m *Model) refilter() {
 }
 
 func (m *Model) matchesFilter(r git.RepoInfo) bool {
+	if m.Verification(r.Path) == Unverified || m.Verification(r.Path) == RemoteError {
+		return false
+	}
 	switch m.filterMode {
 	case FilterError:
 		return r.Status == git.StatusError
@@ -205,6 +261,9 @@ func (m *Model) matchesFilter(r git.RepoInfo) bool {
 func (m *Model) cycleFilter() {
 	counts := make(map[git.RepoStatus]int)
 	for _, r := range m.Repos {
+		if m.Verification(r.Path) == Unverified || m.Verification(r.Path) == RemoteError {
+			continue
+		}
 		counts[r.Status]++
 	}
 

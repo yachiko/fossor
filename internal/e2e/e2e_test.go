@@ -464,7 +464,6 @@ func TestE2E_Discovery(t *testing.T) {
 	ch := git.Discover(ctx, git.DiscoveryOptions{
 		RootDir:   root,
 		Recursive: false,
-		NoFetch:   true,
 		Git:       g,
 	})
 

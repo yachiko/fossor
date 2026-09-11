@@ -35,10 +35,14 @@ type App struct {
 	mainScreen  mainscreen.Model
 	manageModel *manageview.Model
 
-	discovering bool
-	discovered  int
-	spinner     spinner.Model
-	cancelCtx   context.CancelFunc
+	discovering  bool
+	discovered   int
+	liveRepos    map[string]git.RepoInfo
+	discoveryCtx context.Context
+	spinner      spinner.Model
+	cancelCtx    context.CancelFunc
+	cancelled    bool
+	coordinator  *git.OperationCoordinator
 
 	width  int
 	height int
@@ -52,6 +56,7 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, o
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(common.ColorAccent)
 
+	coordinator := git.NewOperationCoordinator()
 	return &App{
 		git:           g,
 		rootDir:       rootDir,
@@ -59,7 +64,8 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, o
 		noFetch:       noFetch,
 		noAutoRefresh: noAutoRefresh,
 		openCmd:       openCmd,
-		mainScreen:    mainscreen.New(g, rootDir, openCmd),
+		coordinator:   coordinator,
+		mainScreen:    mainscreen.New(g, rootDir, openCmd, coordinator),
 		spinner:       s,
 	}
 }
@@ -88,6 +94,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			a.cancelled = true
 			if a.cancelCtx != nil {
 				a.cancelCtx()
 			}
@@ -102,18 +109,53 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case common.RepoDiscoveredMsg:
-		a.discovered++
+		if msg.Refreshing {
+			a.mainScreen.SetVerification(msg.Path, mainscreen.Refreshing)
+			return a, waitForDiscovery(msg.Ch, true)
+		}
+		if !a.coordinator.IsCurrent(msg.Path, msg.Revision) {
+			return a, waitForDiscovery(msg.Ch, msg.RefreshPhase)
+		}
+		if !msg.RefreshPhase {
+			a.discovered++
+		}
+		a.liveRepos[msg.Repo.Path] = msg.Repo
 		a.mainScreen.UpdateRepo(msg.Repo)
-		a.mainScreen.SetStatus(fmt.Sprintf("%s Scanning... (%d repos found)", a.spinner.View(), a.discovered))
-		return a, waitForDiscovery(msg.Ch)
+		if msg.FetchErr != nil && msg.Repo.Status != git.StatusError {
+			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
+		} else {
+			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
+		}
+		if msg.RefreshPhase {
+			a.mainScreen.SetStatus(fmt.Sprintf("%s Refreshing remotes...", a.spinner.View()))
+		} else {
+			a.mainScreen.SetStatus(fmt.Sprintf("%s Scanning... (%d repos found)", a.spinner.View(), a.discovered))
+		}
+		return a, waitForDiscovery(msg.Ch, msg.RefreshPhase)
 
 	case common.DiscoveryCompleteMsg:
-		a.discovering = false
-		a.mainScreen.SetStatus(fmt.Sprintf("Scan complete: %d repos", a.discovered))
-		return a, a.scheduleClearStatus()
+		if msg.Complete && !a.cancelled {
+			paths := make(map[string]bool, len(a.liveRepos))
+			for path := range a.liveRepos {
+				paths[path] = true
+			}
+			a.mainScreen.Prune(paths)
+			repos := make([]git.RepoInfo, 0, len(a.liveRepos))
+			for _, repo := range a.liveRepos {
+				repos = append(repos, repo)
+			}
+			git.SaveDiscoveryCache(a.rootDir, a.recursive, repos)
+		}
+		if msg.Refreshing || a.noFetch || a.cancelled {
+			a.discovering = false
+			a.mainScreen.SetStatus(fmt.Sprintf("Scan complete: %d repos", a.discovered))
+			return a, a.scheduleClearStatus()
+		}
+		a.mainScreen.SetStatus(fmt.Sprintf("%s Refreshing remotes...", a.spinner.View()))
+		return a, a.startRefresh()
 
 	case common.SwitchToManageMsg:
-		fm := manageview.New(a.git, msg.Repo)
+		fm := manageview.New(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified)
 		fm.SetSize(a.width, a.height)
 		a.manageModel = &fm
 		a.screen = screenManage
@@ -132,6 +174,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case common.RepoUpdatedMsg:
 		a.mainScreen.UpdateRepo(msg.Repo)
+		if msg.RemoteError {
+			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
+		} else if msg.Verified {
+			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
+		}
 		if a.manageModel != nil && a.manageModel.Repo.Path == msg.Repo.Path {
 			a.manageModel.UpdateRepo(msg.Repo)
 		}
@@ -236,19 +283,32 @@ func (a *App) View() string {
 func (a *App) startDiscovery() tea.Cmd {
 	a.discovering = true
 	a.discovered = 0
+	a.cancelled = false
+	a.liveRepos = make(map[string]git.RepoInfo)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	a.discoveryCtx = ctx
 	a.cancelCtx = cancel
+	for _, repo := range git.LoadDiscoveryCache(a.rootDir, a.recursive) {
+		a.mainScreen.AddCachedRepo(repo)
+	}
 
 	opts := git.DiscoveryOptions{
 		RootDir:   a.rootDir,
 		Recursive: a.recursive,
-		NoFetch:   a.noFetch,
 		Git:       a.git,
 	}
 
 	ch := git.Discover(ctx, opts)
-	return waitForDiscovery(ch)
+	return waitForDiscovery(ch, false)
+}
+
+func (a *App) startRefresh() tea.Cmd {
+	repos := make([]git.RepoInfo, 0, len(a.liveRepos))
+	for _, repo := range a.liveRepos {
+		repos = append(repos, repo)
+	}
+	return waitForDiscovery(git.RefreshDiscovered(a.discoveryCtx, repos, a.git, a.coordinator), true)
 }
 
 func (a *App) scheduleAutoRefresh() tea.Cmd {
@@ -264,12 +324,12 @@ func (a *App) scheduleClearStatus() tea.Cmd {
 }
 
 // waitForDiscovery reads one result from the channel and returns it as a message.
-func waitForDiscovery(ch <-chan git.DiscoveryResult) tea.Cmd {
+func waitForDiscovery(ch <-chan git.DiscoveryResult, refreshing bool) tea.Cmd {
 	return func() tea.Msg {
 		result, ok := <-ch
 		if !ok {
-			return common.DiscoveryCompleteMsg{}
+			return common.DiscoveryCompleteMsg{Complete: true, Refreshing: refreshing}
 		}
-		return common.RepoDiscoveredMsg{Repo: result.Repo, Ch: ch}
+		return common.RepoDiscoveredMsg{Repo: result.Repo, FetchErr: result.FetchErr, Path: result.Path, Refreshing: result.Refreshing, RefreshPhase: refreshing, Revision: result.Revision, Ch: ch}
 	}
 }

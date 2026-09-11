@@ -44,6 +44,9 @@ func (m *Model) nameColWidth() int {
 func (m *Model) statusCountsView() string {
 	counts := make(map[git.RepoStatus]int)
 	for _, r := range m.Repos {
+		if m.Verification(r.Path) != Verified {
+			continue
+		}
 		counts[r.Status]++
 	}
 
@@ -151,6 +154,7 @@ func (m *Model) View() string {
 	for vi := start; vi < end; vi++ {
 		idx := indices[vi]
 		repo := m.Repos[idx]
+		verification := m.Verification(repo.Path)
 
 		aheadStr := "-"
 		behindStr := "-"
@@ -166,6 +170,14 @@ func (m *Model) View() string {
 		}
 
 		statusStr := repo.Status.String()
+		switch verification {
+		case Unverified:
+			statusStr = "cached"
+		case Refreshing:
+			statusStr = "refreshing"
+		case RemoteError:
+			statusStr = "remote error"
+		}
 		if repo.Status == 0 {
 			statusStr = "..."
 		}
@@ -179,7 +191,11 @@ func (m *Model) View() string {
 			colStatus, statusStr,
 		)
 
-		if vi == m.cursor {
+		if verification == Unverified || verification == Refreshing {
+			b.WriteString(lipgloss.NewStyle().Foreground(common.ColorMuted).Width(m.width).Render(row))
+		} else if verification == RemoteError && vi == m.cursor {
+			b.WriteString(lipgloss.NewStyle().Background(common.ColorSurface).Foreground(common.ColorRed).Width(m.width).Render(row))
+		} else if vi == m.cursor {
 			b.WriteString(selectedStyle.Width(m.width).Render(row))
 		} else {
 			statusColored := lipgloss.NewStyle().Foreground(common.StatusColor(statusStr)).Render(statusStr)

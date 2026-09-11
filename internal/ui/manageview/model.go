@@ -37,9 +37,12 @@ const (
 
 // Model is the manage screen model.
 type Model struct {
-	Repo   git.RepoInfo
-	Git    git.Git
-	remote string
+	Repo                    git.RepoInfo
+	Git                     git.Git
+	remote                  string
+	verified                bool
+	verifyAfterRefresh      bool
+	remoteErrorAfterRefresh bool
 
 	activeTab int
 
@@ -116,7 +119,9 @@ type stashInfoMsg struct {
 }
 
 type repoRefreshedMsg struct {
-	repo git.RepoInfo
+	repo        git.RepoInfo
+	verified    bool
+	remoteError bool
 }
 
 type changesLoadedMsg struct {
@@ -149,7 +154,11 @@ type branchesLoadedMsg struct {
 }
 
 // New creates a new manage screen model.
-func New(g git.Git, repo git.RepoInfo) Model {
+func New(g git.Git, repo git.RepoInfo, verified ...bool) Model {
+	isVerified := true
+	if len(verified) > 0 {
+		isVerified = verified[0]
+	}
 	actions := AllActions()
 	km := make(map[string]int, len(actions))
 	for i, a := range actions {
@@ -171,6 +180,7 @@ func New(g git.Git, repo git.RepoInfo) Model {
 	return Model{
 		Repo:           repo,
 		Git:            g,
+		verified:       isVerified,
 		actions:        actions,
 		keyMap:         km,
 		textInput:      ti,
@@ -344,10 +354,14 @@ func (m *Model) refreshStash() tea.Cmd {
 func (m *Model) refreshRepo() tea.Cmd {
 	g := m.Git
 	path := m.Repo.Path
+	verified := m.verifyAfterRefresh
+	remoteError := m.remoteErrorAfterRefresh
+	m.verifyAfterRefresh = false
+	m.remoteErrorAfterRefresh = false
 	return func() tea.Msg {
 		ctx := context.Background()
 		updated, _ := g.GetRepoInfo(ctx, path)
-		return repoRefreshedMsg{repo: updated}
+		return repoRefreshedMsg{repo: updated, verified: verified, remoteError: remoteError}
 	}
 }
 

@@ -48,7 +48,7 @@ func StatusColor(status string) lipgloss.Color {
 		return ColorGreen
 	case "Behind", "Dirty", "Diverged":
 		return ColorYellow
-	case "Non-default", "Error":
+	case "Non-default", "Error", "remote error":
 		return ColorRed
 	case "Ahead":
 		return ColorBlue

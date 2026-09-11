@@ -165,19 +165,31 @@ func (m *Model) pullSelected() tea.Cmd {
 		return nil
 	}
 	g := m.Git
+	var operationErr error
+	var revision uint64
 	return tea.Sequence(
 		func() tea.Msg {
 			return common.StatusMsg{Text: "Pulling " + repo.Name + "..."}
 		},
 		func() tea.Msg {
 			ctx := context.Background()
-			output, err := g.Pull(ctx, repo.Path)
+			var output string
+			var err error
+			if m.Coordinator != nil {
+				revision, _, err = m.Coordinator.Run(ctx, repo.Path, true, func(ctx context.Context) error {
+					output, err = g.Pull(ctx, repo.Path)
+					return err
+				})
+			} else {
+				output, err = g.Pull(ctx, repo.Path)
+			}
+			operationErr = err
 			return common.OperationResultMsg{RepoName: repo.Name, Op: "pull", Output: output, Err: err}
 		},
 		func() tea.Msg {
 			ctx := context.Background()
 			updated, _ := g.GetRepoInfo(ctx, repo.Path)
-			return common.RepoUpdatedMsg{Repo: updated}
+			return common.RepoUpdatedMsg{Repo: updated, Verified: operationErr == nil, RemoteError: operationErr != nil, Revision: revision}
 		},
 	)
 }
@@ -188,13 +200,21 @@ func (m *Model) fetchSelected() tea.Cmd {
 		return nil
 	}
 	g := m.Git
+	var operationErr error
+	var revision uint64
 	return tea.Sequence(
 		func() tea.Msg {
 			return common.StatusMsg{Text: "Fetching " + repo.Name + "..."}
 		},
 		func() tea.Msg {
 			ctx := context.Background()
-			err := g.Fetch(ctx, repo.Path)
+			var err error
+			if m.Coordinator != nil {
+				revision, _, err = m.Coordinator.Run(ctx, repo.Path, true, func(ctx context.Context) error { return g.Fetch(ctx, repo.Path) })
+			} else {
+				err = g.Fetch(ctx, repo.Path)
+			}
+			operationErr = err
 			if err != nil {
 				return common.OperationResultMsg{RepoName: repo.Name, Op: "fetch", Err: err}
 			}
@@ -203,14 +223,14 @@ func (m *Model) fetchSelected() tea.Cmd {
 		func() tea.Msg {
 			ctx := context.Background()
 			updated, _ := g.GetRepoInfo(ctx, repo.Path)
-			return common.RepoUpdatedMsg{Repo: updated}
+			return common.RepoUpdatedMsg{Repo: updated, Verified: operationErr == nil, RemoteError: operationErr != nil, Revision: revision}
 		},
 	)
 }
 
 func (m *Model) switchDefaultSelected() tea.Cmd {
 	repo, ok := m.SelectedRepo()
-	if !ok {
+	if !ok || !m.IsActionable(repo) {
 		return nil
 	}
 	if repo.Branch == repo.DefaultBranch {
@@ -247,7 +267,7 @@ func (m *Model) switchDefaultAll() tea.Cmd {
 	var repos []git.RepoInfo
 	for _, idx := range m.visibleIndices() {
 		r := m.Repos[idx]
-		if r.Branch != r.DefaultBranch {
+		if m.IsActionable(r) && r.Branch != r.DefaultBranch {
 			repos = append(repos, r)
 		}
 	}
@@ -280,17 +300,22 @@ func (m *Model) switchDefaultAll() tea.Cmd {
 }
 
 func (m *Model) pullAll() tea.Cmd {
-	indices := m.visibleIndices()
-	if len(indices) == 0 {
+	var repos []git.RepoInfo
+	for _, idx := range m.visibleIndices() {
+		r := m.Repos[idx]
+		if m.IsActionable(r) {
+			repos = append(repos, r)
+		}
+	}
+	if len(repos) == 0 {
 		return nil
 	}
-	total := int64(len(indices))
+	total := int64(len(repos))
 	var counter int64
 	g := m.Git
 	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
-	for _, idx := range indices {
-		r := m.Repos[idx]
+	for _, r := range repos {
 		cmds = append(cmds, func() tea.Msg {
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -309,17 +334,22 @@ func (m *Model) pullAll() tea.Cmd {
 }
 
 func (m *Model) fetchAll() tea.Cmd {
-	indices := m.visibleIndices()
-	if len(indices) == 0 {
+	var repos []git.RepoInfo
+	for _, idx := range m.visibleIndices() {
+		r := m.Repos[idx]
+		if m.IsActionable(r) {
+			repos = append(repos, r)
+		}
+	}
+	if len(repos) == 0 {
 		return nil
 	}
-	total := int64(len(indices))
+	total := int64(len(repos))
 	var counter int64
 	g := m.Git
 	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
-	for _, idx := range indices {
-		r := m.Repos[idx]
+	for _, r := range repos {
 		cmds = append(cmds, func() tea.Msg {
 			sem <- struct{}{}
 			defer func() { <-sem }()

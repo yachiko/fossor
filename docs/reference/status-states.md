@@ -16,6 +16,8 @@ The `Status` column on the main screen summarizes each repo into one of the stat
 | `Non-default` | Red     | Currently checked out to a branch that isn't the default. Overrides any other state.          |
 | `Error`       | Red     | Discovery failed (e.g. corrupted `.git`, permission denied). Inspect with `FOSSOR_DEBUG=1`.   |
 | `…` (dots)    | Muted   | Discovery is still in progress for this repo.                                                 |
+| `cached` / `checking` | Muted | A cached row is awaiting live discovery. Its saved status is retained but not counted or filterable. |
+| `remote error` | Red | Local inspection worked but `git fetch` failed. Pull and fetch remain available; it is not counted or filterable. |
 
 ## Precedence
 
@@ -42,7 +44,7 @@ If `--no-fetch` is passed, remote refs are not refreshed before this computation
 
 ## Status Filter
 
-Press `t` on the main screen to cycle through the filter. The filter only includes states that have at least one matching repo, plus `All` at the end. Bulk actions (`P`, `F`, `D`) operate on the filtered view, not the entire directory.
+Press `t` on the main screen to cycle through the filter. The filter only includes verified states that have at least one matching repo, plus `All` at the end. Bulk actions (`P`, `F`, `D`) operate on verified rows in the filtered view, not the entire directory.
 
 ## See Also
 

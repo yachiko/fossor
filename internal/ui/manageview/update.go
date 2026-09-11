@@ -31,8 +31,14 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.lastErr = msg.err
 		if msg.err != nil {
 			m.lastOutput = msg.err.Error()
+			if msg.action == "pull" || msg.action == "fetch" {
+				m.remoteErrorAfterRefresh = true
+			}
 		} else {
 			m.lastOutput = ""
+			if msg.action == "pull" || msg.action == "fetch" {
+				m.verifyAfterRefresh = true
+			}
 		}
 		cmds := []tea.Cmd{m.refreshRepo(), m.refreshStash(), m.loadChanges()}
 		if m.branchesLoaded {
@@ -48,7 +54,12 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case repoRefreshedMsg:
 		m.Repo = msg.repo
-		return true, func() tea.Msg { return common.RepoUpdatedMsg{Repo: msg.repo} }
+		if msg.verified {
+			m.verified = true
+		}
+		return true, func() tea.Msg {
+			return common.RepoUpdatedMsg{Repo: msg.repo, Verified: msg.verified, RemoteError: msg.remoteError}
+		}
 	case changesLoadedMsg:
 		m.changes = msg.changes
 		if m.fileCursor >= len(m.changes) {
@@ -129,6 +140,9 @@ func (m *Model) updateNormal(msg tea.Msg) tea.Cmd {
 	}
 
 	// Per-tab key handling
+	if !m.verified && m.activeTab != TabStatus {
+		return nil
+	}
 	switch m.activeTab {
 	case TabStatus:
 		return m.updateStatus(kmsg)
@@ -164,6 +178,9 @@ func (m *Model) switchTab(tab int) tea.Cmd {
 // Status tab: action keys + file navigation
 func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
+	if !m.verified && key != "p" && key != "f" {
+		return nil
+	}
 
 	switch key {
 	case "up":
@@ -209,6 +226,9 @@ func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	action := m.actions[idx]
+	if !m.verified && action.Name != "pull" && action.Name != "fetch" {
+		return nil
+	}
 	if !action.Enabled(m.Repo) || action.BuildCmd == nil {
 		return nil
 	}

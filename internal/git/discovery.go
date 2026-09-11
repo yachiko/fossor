@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,15 +30,17 @@ func discoveryConcurrency() int {
 
 // DiscoveryResult carries a discovered repo or indicates completion.
 type DiscoveryResult struct {
-	Repo RepoInfo
-	Done bool
+	Repo       RepoInfo
+	FetchErr   error
+	Path       string
+	Refreshing bool
+	Revision   uint64
 }
 
 // DiscoveryOptions configures discovery behavior.
 type DiscoveryOptions struct {
 	RootDir   string
 	Recursive bool
-	NoFetch   bool
 	Git       Git
 }
 
@@ -68,20 +71,80 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				if !opts.NoFetch {
-					// Best-effort fetch; don't fail discovery on fetch error
-					_ = opts.Git.Fetch(ctx, rp)
+				info, err := opts.Git.GetRepoInfo(ctx, rp)
+				if err != nil {
+					return
 				}
 
-				info, _ := opts.Git.GetRepoInfo(ctx, rp)
-
 				select {
-				case ch <- DiscoveryResult{Repo: info}:
+				case ch <- DiscoveryResult{Repo: info, Path: rp}:
 				case <-ctx.Done():
 				}
 			}(repoPath)
 		}
 
+		wg.Wait()
+	}()
+
+	return ch
+}
+
+// RefreshDiscovered fetches the supplied repositories and streams refreshed
+// status. It is intentionally separate from Discover so local status is
+// available before any network operation begins.
+func RefreshDiscovered(ctx context.Context, repos []RepoInfo, g Git, coordinator *OperationCoordinator) <-chan DiscoveryResult {
+	ch := make(chan DiscoveryResult, 32)
+
+	go func() {
+		defer close(ch)
+
+		sem := make(chan struct{}, defaultConcurrency)
+		var wg sync.WaitGroup
+		for _, repo := range repos {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(local RepoInfo) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				rp := local.Path
+
+				select {
+				case ch <- DiscoveryResult{Path: rp, Refreshing: true}:
+				case <-ctx.Done():
+					return
+				}
+
+				var revision uint64
+				var fetchErr error
+				if coordinator != nil {
+					var ran bool
+					revision, ran, fetchErr = coordinator.Run(ctx, rp, false, func(ctx context.Context) error {
+						return g.Fetch(ctx, rp)
+					})
+					if !ran {
+						return
+					}
+				} else {
+					fetchErr = g.Fetch(ctx, rp)
+				}
+
+				info, err := g.GetRepoInfo(ctx, rp)
+				if err != nil {
+					info = local
+					fetchErr = errors.Join(fetchErr, err)
+				}
+				select {
+				case ch <- DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision}:
+				case <-ctx.Done():
+				}
+			}(repo)
+		}
 		wg.Wait()
 	}()
 
