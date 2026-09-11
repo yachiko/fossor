@@ -23,18 +23,32 @@ var (
 
 // Fixed column widths (Name is dynamic)
 const (
-	colBranch  = 20
-	colAhead   = 7
-	colBehind  = 7
-	colChanges = 9
-	colStatus  = 14
+	colWorktree = 1
+	colBranch   = 20
+	colAhead    = 7
+	colBehind   = 7
+	colChanges  = 9
+	colStatus   = 14
 )
 
 // fixedColumnsWidth = leading indent(2) + spaces between cols(5) + branch + ahead + behind + changes + status
 const fixedColumnsWidth = 2 + 5 + colBranch + colAhead + colBehind + colChanges + colStatus
 
+func (m *Model) hasWorktrees() bool {
+	for _, repo := range m.Repos {
+		if repo.LinkedWorktree {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Model) nameColWidth() int {
-	w := m.width - fixedColumnsWidth
+	fixedWidth := fixedColumnsWidth
+	if m.hasWorktrees() {
+		fixedWidth += colWorktree + 1
+	}
+	w := m.width - fixedWidth
 	if w < 12 {
 		w = 12
 	}
@@ -130,35 +144,59 @@ func (m *Model) View() string {
 		return ""
 	}
 
-	header := fmt.Sprintf("  %-*s %-*s %*s %*s %*s %-*s",
-		colName, "Name"+sortIndicator(SortName),
-		colBranch, "Branch"+sortIndicator(SortBranch),
-		colAhead, "Ahead"+sortIndicator(SortAhead),
-		colBehind, "Behind"+sortIndicator(SortBehind),
-		colChanges, "Changes"+sortIndicator(SortChanges),
-		colStatus, "Status"+sortIndicator(SortStatus),
-	)
+	var header string
+	if m.hasWorktrees() {
+		header = fmt.Sprintf("  %-*s %-*s %-*s %*s %*s %*s %-*s",
+			colWorktree, "",
+			colName, "Name"+sortIndicator(SortName),
+			colBranch, "Branch"+sortIndicator(SortBranch),
+			colAhead, "Ahead"+sortIndicator(SortAhead),
+			colBehind, "Behind"+sortIndicator(SortBehind),
+			colChanges, "Changes"+sortIndicator(SortChanges),
+			colStatus, "Status"+sortIndicator(SortStatus),
+		)
+	} else {
+		header = fmt.Sprintf("  %-*s %-*s %*s %*s %*s %-*s",
+			colName, "Name"+sortIndicator(SortName),
+			colBranch, "Branch"+sortIndicator(SortBranch),
+			colAhead, "Ahead"+sortIndicator(SortAhead),
+			colBehind, "Behind"+sortIndicator(SortBehind),
+			colChanges, "Changes"+sortIndicator(SortChanges),
+			colStatus, "Status"+sortIndicator(SortStatus),
+		)
+	}
 	b.WriteString(headerStyle.Width(m.width).Render(header))
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("─", m.width))
 	b.WriteString("\n")
 
 	// Rows
-	indices := m.visibleIndices()
+	rows := m.visibleRows()
 	tableHeight := m.TableHeight()
 
 	start := m.scrollOffset
 	end := start + tableHeight
-	if end > len(indices) {
-		end = len(indices)
+	if end > len(rows) {
+		end = len(rows)
 	}
-	if start > len(indices) {
-		start = len(indices)
+	if start > len(rows) {
+		start = len(rows)
 	}
 
 	for vi := start; vi < end; vi++ {
-		idx := indices[vi]
-		repo := m.Repos[idx]
+		tableRow := rows[vi]
+		if tableRow.repoIndex < 0 {
+			marker := m.worktreeMarker(tableRow)
+			row := fmt.Sprintf("  %-*s %s worktrees (%d)", colWorktree, marker, tableRow.groupName, tableRow.groupSize)
+			style := lipgloss.NewStyle().Bold(true).Foreground(common.ColorAccent)
+			if vi == m.cursor {
+				style = selectedStyle.Bold(true)
+			}
+			b.WriteString(style.Width(m.width).Render(row))
+			b.WriteString("\n")
+			continue
+		}
+		repo := m.Repos[tableRow.repoIndex]
 		verification := m.Verification(repo.Path)
 
 		aheadStr := "-"
@@ -185,14 +223,35 @@ func (m *Model) View() string {
 			statusStr = "..."
 		}
 
-		row := fmt.Sprintf("  %-*s %-*s %*s %*s %*s %-*s",
-			colName, truncate(repo.Name, colName),
-			colBranch, truncate(repo.Branch, colBranch),
-			colAhead, aheadStr,
-			colBehind, behindStr,
-			colChanges, changesStr,
-			colStatus, statusStr,
-		)
+		name := repo.Name
+		if tableRow.groupKey != "" && !tableRow.groupRoot {
+			name = "  " + name
+		}
+		marker := ""
+		if tableRow.groupRoot {
+			marker = m.worktreeMarker(tableRow)
+		}
+		var row string
+		if m.hasWorktrees() {
+			row = fmt.Sprintf("  %-*s %-*s %-*s %*s %*s %*s %-*s",
+				colWorktree, marker,
+				colName, truncate(name, colName),
+				colBranch, truncate(repo.Branch, colBranch),
+				colAhead, aheadStr,
+				colBehind, behindStr,
+				colChanges, changesStr,
+				colStatus, statusStr,
+			)
+		} else {
+			row = fmt.Sprintf("  %-*s %-*s %*s %*s %*s %-*s",
+				colName, truncate(name, colName),
+				colBranch, truncate(repo.Branch, colBranch),
+				colAhead, aheadStr,
+				colBehind, behindStr,
+				colChanges, changesStr,
+				colStatus, statusStr,
+			)
+		}
 
 		if verification == Unverified {
 			b.WriteString(lipgloss.NewStyle().Foreground(common.ColorMuted).Width(m.width).Render(row))
@@ -202,13 +261,25 @@ func (m *Model) View() string {
 			b.WriteString(selectedStyle.Width(m.width).Render(row))
 		} else {
 			statusColored := lipgloss.NewStyle().Foreground(common.StatusColor(statusStr)).Render(statusStr)
-			rowNoStatus := fmt.Sprintf("  %-*s %-*s %*s %*s %*s ",
-				colName, truncate(repo.Name, colName),
-				colBranch, truncate(repo.Branch, colBranch),
-				colAhead, aheadStr,
-				colBehind, behindStr,
-				colChanges, changesStr,
-			)
+			var rowNoStatus string
+			if m.hasWorktrees() {
+				rowNoStatus = fmt.Sprintf("  %-*s %-*s %-*s %*s %*s %*s ",
+					colWorktree, marker,
+					colName, truncate(name, colName),
+					colBranch, truncate(repo.Branch, colBranch),
+					colAhead, aheadStr,
+					colBehind, behindStr,
+					colChanges, changesStr,
+				)
+			} else {
+				rowNoStatus = fmt.Sprintf("  %-*s %-*s %*s %*s %*s ",
+					colName, truncate(name, colName),
+					colBranch, truncate(repo.Branch, colBranch),
+					colAhead, aheadStr,
+					colBehind, behindStr,
+					colChanges, changesStr,
+				)
+			}
 			fullRow := rowNoStatus + statusColored
 			padding := m.width - lipgloss.Width(fullRow)
 			if padding > 0 {
@@ -231,6 +302,7 @@ func (m *Model) View() string {
 	// Status bar
 	helpPairs := []string{
 		"↵", "manage",
+		"space", "toggle group",
 		"s", "search",
 		"t", "filter",
 		"1-6", "sort",
@@ -245,6 +317,13 @@ func (m *Model) View() string {
 	b.WriteString(components.StatusBar(m.width, helpPairs, m.statusMsg))
 
 	return b.String()
+}
+
+func (m *Model) worktreeMarker(row tableRow) string {
+	if m.collapsed[row.groupKey] {
+		return "▶"
+	}
+	return "▼"
 }
 
 func truncate(s string, maxLen int) string {

@@ -39,6 +39,7 @@ const (
 type Model struct {
 	Repo                    git.RepoInfo
 	Git                     git.Git
+	Coordinator             *git.OperationCoordinator
 	remote                  string
 	verified                bool
 	verifyAfterRefresh      bool
@@ -114,6 +115,12 @@ type execFinishedMsg struct {
 	err    error
 }
 
+type remoteOperationReadyMsg struct {
+	action  string
+	cmd     *exec.Cmd
+	release func()
+}
+
 type stashInfoMsg struct {
 	info string
 }
@@ -159,6 +166,16 @@ func New(g git.Git, repo git.RepoInfo, verified ...bool) Model {
 	if len(verified) > 0 {
 		isVerified = verified[0]
 	}
+	return newModel(g, repo, isVerified, nil)
+}
+
+// NewWithCoordinator creates a manage view whose remote actions share the
+// main screen's worktree-family coordinator.
+func NewWithCoordinator(g git.Git, repo git.RepoInfo, verified bool, coordinator *git.OperationCoordinator) Model {
+	return newModel(g, repo, verified, coordinator)
+}
+
+func newModel(g git.Git, repo git.RepoInfo, isVerified bool, coordinator *git.OperationCoordinator) Model {
 	actions := AllActions()
 	km := make(map[string]int, len(actions))
 	for i, a := range actions {
@@ -180,6 +197,7 @@ func New(g git.Git, repo git.RepoInfo, verified ...bool) Model {
 	return Model{
 		Repo:           repo,
 		Git:            g,
+		Coordinator:    coordinator,
 		verified:       isVerified,
 		actions:        actions,
 		keyMap:         km,

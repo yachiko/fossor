@@ -6,7 +6,7 @@ High-level flow (happy path):
 
 1. `cmd.Execute()` resolves the root directory and constructs the `ui.App` Bubble Tea model.
 2. `App.Init()` starts the discovery pipeline in a goroutine, kicks the spinner, and (unless `--no-auto-refresh`) schedules the 30-second refresh tick.
-3. Discovery walks the directory, fans out `git` invocations per repo (parallelism = NumCPU), and streams `RepoDiscoveredMsg` per repo back through a Bubble Tea command.
+3. Discovery walks the selected directory, validates Git worktrees (including linked worktrees), excludes submodules, fans out `git` invocations per checkout, and streams `RepoDiscoveredMsg` back through a Bubble Tea command.
 4. Each message lands in `App.Update`, which forwards to `mainscreen.UpdateRepo` to grow the table live.
 5. The user navigates with the keybindings; pressing `Enter` constructs a `manageview.Model` and switches screens.
 6. The manage view loads commits / stash / branches lazily as tabs are entered, and renders the Status tab from `git status --porcelain` + `git diff` output.
@@ -18,7 +18,7 @@ High-level flow (happy path):
 | ---------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Root command                 | `cmd/root.go`                          | Cobra wiring, flag definitions, root-dir validation, `--version`.                            |
 | App model                    | `internal/ui/app.go`                   | Top-level Bubble Tea model. Switches between main screen and manage view. Owns discovery.    |
-| Main screen                  | `internal/ui/mainscreen/`              | Repo table, sort/filter, status counts header, bulk actions.                                 |
+| Main screen                  | `internal/ui/mainscreen/`              | Checkout table, worktree-family grouping, sort/filter, status counts, bulk actions.          |
 | Manage view                  | `internal/ui/manageview/`              | Four-tab per-repo workspace. Action registry, inline commit editor.                          |
 | Common UI                    | `internal/ui/common/`                  | Theme colors, shared messages, key constants.                                                 |
 | Status bar                   | `internal/ui/components/statusbar.go`  | Reusable bottom-of-screen help/status line.                                                  |
@@ -68,7 +68,7 @@ The Tea `Cmd` that wraps the channel is re-issued on every received message, so 
 ## Concurrency
 
 - Discovery: fan-out goroutines + buffered channel.
-- Bulk pull/fetch/switch: semaphore-bounded goroutines (limit 8) wrapped as a single `tea.Cmd` that fires per-repo `BulkOperationTickMsg`s.
+- Fetch and pull operations sharing a resolved common Git directory are serialized by `OperationCoordinator`; local checkout operations remain independent.
 - Background refresh: a 30-second `tea.Tick` posts `RefreshTickMsg`; only the main screen acts on it, and only for the selected repo.
 - All `git` calls go through `exec.CommandContext` so they respect cancellation when the app shuts down.
 
@@ -80,7 +80,7 @@ Inside the `git` wrapper, every command is run through `runGitOnce`. On failure,
 
 Fossor has no configuration file. It stores the last complete, non-cancelled discovery snapshot in `~/.cache/fossor/repositories.json`, keyed by absolute root and recursive mode. The versioned JSON file is private and atomically replaced. Read and write failures are ignored, so the cache never prevents startup or discovery.
 
-Cached rows are hydrated synchronously as unverified and change to checking only while their live refresh runs. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents are local repository metadata only; remote state is always refreshed by the live scan unless `--no-fetch` is used.
+Cached rows are hydrated synchronously as unverified and change to checking only while their live refresh runs. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents include resolved common-Git-dir identity so linked worktrees can be grouped immediately; remote state is always refreshed by the live scan unless `--no-fetch` is used.
 
 ## See Also
 

@@ -118,3 +118,35 @@ func TestCycleFilter(t *testing.T) {
 		}
 	})
 }
+
+func TestWorktreeGroupsProjectHeadersAndKeepCheckoutsActionable(t *testing.T) {
+	m := New(nil, "", "")
+	m.Repos = []git.RepoInfo{
+		{Name: "primary", Path: "/repos/primary", CommonGitDir: "/repos/primary/.git", Status: git.StatusUpToDate},
+		{Name: "feature", Path: "/repos/feature", CommonGitDir: "/repos/primary/.git", LinkedWorktree: true, Status: git.StatusBehind},
+		{Name: "other", Path: "/repos/other", CommonGitDir: "/repos/other/.git", Status: git.StatusUpToDate},
+	}
+	m.refilter()
+	if rows := m.visibleRows(); len(rows) != 3 || m.Repos[rows[0].repoIndex].Path != "/repos/primary" || !rows[0].groupRoot || rows[0].groupSize != 2 {
+		t.Fatalf("rows = %#v, want primary root plus two checkouts", rows)
+	}
+	if got := m.visibleIndices(); len(got) != 3 {
+		t.Fatalf("actionable rows = %v, want 3 checkout rows", got)
+	}
+	if !m.toggleSelectedGroup() {
+		t.Fatal("group header did not toggle")
+	}
+	if rows := m.visibleRows(); len(rows) != 2 || m.Repos[rows[0].repoIndex].Path != "/repos/primary" || !rows[0].groupRoot {
+		t.Fatalf("collapsed rows = %#v", rows)
+	}
+}
+
+func TestSearchMatchesWorktreePath(t *testing.T) {
+	m := New(nil, "", "")
+	m.Repos = []git.RepoInfo{{Name: "checkout", Path: "/repos/feature-123", Status: git.StatusUpToDate}}
+	m.searchText.SetValue("feature-123")
+	m.refilter()
+	if got := m.visibleIndices(); len(got) != 1 {
+		t.Fatalf("path search rows = %v, want checkout", got)
+	}
+}

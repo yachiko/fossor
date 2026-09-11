@@ -60,7 +60,7 @@ commit_to_bare() {
     rm -rf "$tmp"
 }
 
-echo "Creating 20 test repositories..."
+echo "Creating 21 repository families..."
 
 # --- 1. clean ---
 echo "  1/20 clean"
@@ -282,6 +282,16 @@ GIT_AUTHOR_DATE="2025-01-15T18:00:00+00:00" GIT_COMMITTER_DATE="2025-01-15T18:00
 # Make submodule dirty
 echo "local submodule edit" >> "$REPOS/with-submodule-dirty/libs/shared/README.md"
 
+# --- 21. worktree family ---
+echo "  21/21 worktree family"
+worktree_primary="$REPOS/worktree-primary"
+worktree_feature="$REPOS/worktree-feature"
+init_repo "$worktree_primary"
+setup_remote "$worktree_primary"
+git -C "$worktree_primary" fetch -q
+git -C "$worktree_primary" worktree add -q -b feature/worktree "$worktree_feature"
+echo "worktree change" > "$worktree_feature/WIP.md"
+
 echo ""
-echo "Done! Created 20 repos in $REPOS"
+echo "Done! Created 21 repository families (22 checkouts) in $REPOS"
 echo "Run fossor with: fossor $REPOS"

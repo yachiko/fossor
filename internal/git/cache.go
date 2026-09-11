@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-const cacheVersion = 1
+const cacheVersion = 2
 
 // CacheDir is overrideable by tests. An empty value uses the user's cache dir.
 var CacheDir string

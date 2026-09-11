@@ -35,6 +35,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return func() tea.Msg { return common.SwitchToManageMsg{Repo: repo} }
 		}
 
+	case msg.String() == " ":
+		m.toggleSelectedGroup()
+
 	case key.Matches(msg, common.MainKeys.Pull):
 		return m.pullSelected()
 
@@ -96,16 +99,30 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.clampCursor()
 
 	case msg.String() == "G":
-		vis := m.visibleIndices()
-		if len(vis) > 0 {
-			m.cursor = len(vis) - 1
+		rows := m.visibleRows()
+		if len(rows) > 0 {
+			m.cursor = len(rows) - 1
 		}
+		m.clampCursor()
 
 	case msg.String() == "g":
 		m.cursor = 0
+		m.clampCursor()
+
 	}
 
 	return nil
+}
+
+func (m *Model) toggleSelectedGroup() bool {
+	rows := m.visibleRows()
+	if m.cursor >= len(rows) || rows[m.cursor].groupKey == "" || (rows[m.cursor].repoIndex >= 0 && !rows[m.cursor].groupRoot) {
+		return false
+	}
+	key := rows[m.cursor].groupKey
+	m.collapsed[key] = !m.collapsed[key]
+	m.clampCursor()
+	return true
 }
 
 func (m *Model) updateSearch(msg tea.Msg) tea.Cmd {
@@ -176,7 +193,7 @@ func (m *Model) pullSelected() tea.Cmd {
 			var output string
 			var err error
 			if m.Coordinator != nil {
-				revision, _, err = m.Coordinator.Run(ctx, repo.Path, true, func(ctx context.Context) error {
+				revision, _, err = m.Coordinator.Run(ctx, repo.CoordinatorKey(), true, func(ctx context.Context) error {
 					output, err = g.Pull(ctx, repo.Path)
 					return err
 				})
@@ -210,7 +227,7 @@ func (m *Model) fetchSelected() tea.Cmd {
 			ctx := context.Background()
 			var err error
 			if m.Coordinator != nil {
-				revision, _, err = m.Coordinator.Run(ctx, repo.Path, true, func(ctx context.Context) error { return g.Fetch(ctx, repo.Path) })
+				revision, _, err = m.Coordinator.Run(ctx, repo.CoordinatorKey(), true, func(ctx context.Context) error { return g.Fetch(ctx, repo.Path) })
 			} else {
 				err = g.Fetch(ctx, repo.Path)
 			}
@@ -288,7 +305,7 @@ func (m *Model) switchDefaultAll() tea.Cmd {
 			ctx := context.Background()
 			_, err := g.SwitchBranch(ctx, r.Path, r.DefaultBranch)
 			done := atomic.AddInt64(&counter, 1) == total
-			return common.BulkOperationTickMsg{RepoName: r.Name, Op: "switch", Err: err, Done: done}
+			return common.BulkOperationTickMsg{RepoName: r.Name, Path: r.Path, Op: "switch", Err: err, Done: done}
 		})
 	}
 	return tea.Sequence(
@@ -316,13 +333,22 @@ func (m *Model) pullAll() tea.Cmd {
 	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
 	for _, r := range repos {
+		r := r
 		cmds = append(cmds, func() tea.Msg {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			ctx := context.Background()
-			_, err := g.Pull(ctx, r.Path)
+			var err error
+			if m.Coordinator != nil {
+				_, _, err = m.Coordinator.Run(ctx, r.CoordinatorKey(), true, func(ctx context.Context) error {
+					_, err := g.Pull(ctx, r.Path)
+					return err
+				})
+			} else {
+				_, err = g.Pull(ctx, r.Path)
+			}
 			done := atomic.AddInt64(&counter, 1) == total
-			return common.BulkOperationTickMsg{RepoName: r.Name, Op: "pull", Err: err, Done: done}
+			return common.BulkOperationTickMsg{RepoName: r.Name, Path: r.Path, Op: "pull", Err: err, Done: done}
 		})
 	}
 	return tea.Sequence(
@@ -350,13 +376,21 @@ func (m *Model) fetchAll() tea.Cmd {
 	sem := make(chan struct{}, bulkOpConcurrency)
 	var cmds []tea.Cmd
 	for _, r := range repos {
+		r := r
 		cmds = append(cmds, func() tea.Msg {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			ctx := context.Background()
-			err := g.Fetch(ctx, r.Path)
+			var err error
+			if m.Coordinator != nil {
+				_, _, err = m.Coordinator.Run(ctx, r.CoordinatorKey(), true, func(ctx context.Context) error {
+					return g.Fetch(ctx, r.Path)
+				})
+			} else {
+				err = g.Fetch(ctx, r.Path)
+			}
 			done := atomic.AddInt64(&counter, 1) == total
-			return common.BulkOperationTickMsg{RepoName: r.Name, Op: "fetch", Err: err, Done: done}
+			return common.BulkOperationTickMsg{RepoName: r.Name, Path: r.Path, Op: "fetch", Err: err, Done: done}
 		})
 	}
 	return tea.Sequence(
@@ -391,5 +425,19 @@ func (m *Model) RefreshSelected(g git.Git) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	return RefreshRepoCmd(g, repo.Path, true)
+	return func() tea.Msg {
+		ctx := context.Background()
+		if m.Coordinator != nil {
+			_, _, _ = m.Coordinator.Run(ctx, repo.CoordinatorKey(), false, func(ctx context.Context) error {
+				return g.Fetch(ctx, repo.Path)
+			})
+		} else {
+			_ = g.Fetch(ctx, repo.Path)
+		}
+		info, err := g.GetRepoInfo(ctx, repo.Path)
+		if err == nil {
+			return common.RepoUpdatedMsg{Repo: info}
+		}
+		return nil
+	}
 }

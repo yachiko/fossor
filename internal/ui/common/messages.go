@@ -40,6 +40,7 @@ type OperationResultMsg struct {
 // BulkOperationTickMsg is sent as each bulk operation completes.
 type BulkOperationTickMsg struct {
 	RepoName string
+	Path     string
 	Op       string
 	Err      error
 	Done     bool // true when this is the last operation in the batch

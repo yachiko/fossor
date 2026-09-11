@@ -26,23 +26,25 @@ func NewOperationCoordinator() *OperationCoordinator {
 	return &OperationCoordinator{states: make(map[string]*operationState)}
 }
 
-// Run executes fn exclusively for path. It returns false when a low-priority
-// operation was superseded while queued behind an existing operation.
-func (c *OperationCoordinator) Run(ctx context.Context, path string, high bool, fn func(context.Context) error) (revision uint64, ran bool, err error) {
+// Acquire reserves exclusive access to key. The caller must invoke the
+// returned release function exactly once after its operation completes.
+// It returns false when a low-priority operation was superseded while queued
+// behind an existing operation.
+func (c *OperationCoordinator) Acquire(ctx context.Context, key string, high bool) (revision uint64, ran bool, release func(), err error) {
 	queuedHigh := false
 	queuedLow := false
 	lowGeneration := uint64(0)
 	for {
 		c.mu.Lock()
-		s := c.states[path]
+		s := c.states[key]
 		if s == nil {
 			s = &operationState{}
-			c.states[path] = s
+			c.states[key] = s
 		}
 		if !s.running {
 			if !high && (s.highWaiting > 0 || (queuedLow && s.highGeneration != lowGeneration)) {
 				c.mu.Unlock()
-				return s.revision, false, nil
+				return s.revision, false, nil, nil
 			}
 			if queuedHigh {
 				s.highWaiting--
@@ -52,12 +54,12 @@ func (c *OperationCoordinator) Run(ctx context.Context, path string, high bool, 
 			s.done = make(chan struct{})
 			revision = s.revision
 			c.mu.Unlock()
-			err = fn(ctx)
-			c.mu.Lock()
-			s.running = false
-			close(s.done)
-			c.mu.Unlock()
-			return revision, true, err
+			return revision, true, func() {
+				c.mu.Lock()
+				s.running = false
+				close(s.done)
+				c.mu.Unlock()
+			}, nil
 		}
 		wait := s.done
 		if high && !queuedHigh {
@@ -76,32 +78,42 @@ func (c *OperationCoordinator) Run(ctx context.Context, path string, high bool, 
 		case <-wait:
 			if !high {
 				c.mu.Lock()
-				c.states[path].lowWaiting--
+				c.states[key].lowWaiting--
 				c.mu.Unlock()
 			}
 		case <-ctx.Done():
 			if queuedHigh {
 				c.mu.Lock()
-				c.states[path].highWaiting--
+				c.states[key].highWaiting--
 				c.mu.Unlock()
 			}
 			if !high {
 				c.mu.Lock()
-				c.states[path].lowWaiting--
+				c.states[key].lowWaiting--
 				c.mu.Unlock()
 			}
-			return c.Revision(path), false, ctx.Err()
+			return c.Revision(key), false, nil, ctx.Err()
 		}
 		if !high {
 			c.mu.Lock()
-			superseded := c.states[path].highWaiting > 0
-			revision = c.states[path].revision
+			superseded := c.states[key].highWaiting > 0
+			revision = c.states[key].revision
 			c.mu.Unlock()
 			if superseded {
-				return revision, false, nil
+				return revision, false, nil, nil
 			}
 		}
 	}
+}
+
+// Run executes fn exclusively for key.
+func (c *OperationCoordinator) Run(ctx context.Context, key string, high bool, fn func(context.Context) error) (revision uint64, ran bool, err error) {
+	revision, ran, release, err := c.Acquire(ctx, key, high)
+	if err != nil || !ran {
+		return revision, ran, err
+	}
+	defer release()
+	return revision, true, fn(ctx)
 }
 
 func (c *OperationCoordinator) Revision(path string) uint64 {

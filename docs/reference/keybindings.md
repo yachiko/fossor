@@ -8,8 +8,8 @@ Canonical, complete keybinding reference. The README excerpts the most common on
 
 | Key       | Action                                                         |
 | --------- | -------------------------------------------------------------- |
-| `Enter`   | Open the highlighted repo in the manage view                   |
-| `s` / `/` | Start search (substring over name, branch, status)             |
+| `Enter`   | Open the highlighted checkout in the manage view               |
+| `s` / `/` | Start search (substring over name, path, branch, remote, status) |
 | `t`       | Cycle status filter (`All` → `Error` → … → `Up to date`)       |
 | `1`–`6`   | Sort by column (`Name`, `Branch`, `Ahead`, `Behind`, `Changes`, `Status`); press again to reverse |
 | `p`       | Pull selected repo                                             |
@@ -21,6 +21,7 @@ Canonical, complete keybinding reference. The README excerpts the most common on
 | `o`       | Open in external editor (only when `--open-cmd` / `$FOSSOR_OPEN_CMD` is set) |
 | `j` / `↓` | Move cursor down                                               |
 | `k` / `↑` | Move cursor up                                                 |
+| `Space`   | Collapse or expand the selected worktree group                  |
 | `Esc`     | Exit search (when active)                                      |
 | `q`       | Quit                                                           |
 

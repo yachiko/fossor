@@ -200,6 +200,81 @@ func TestDiscovery(t *testing.T) {
 	}
 }
 
+func TestDiscoveryFindsLinkedWorktreesAndExcludesSubmodules(t *testing.T) {
+	root := t.TempDir()
+	primary := filepath.Join(root, "primary")
+	linked := filepath.Join(root, "linked")
+	outside := filepath.Join(t.TempDir(), "outside")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	run(root, "init", "--initial-branch=main", primary)
+	run(primary, "config", "user.email", "test@test.com")
+	run(primary, "config", "user.name", "Test")
+	run(primary, "commit", "--allow-empty", "-m", "initial")
+	run(primary, "worktree", "add", "-b", "feature", linked)
+	run(primary, "worktree", "add", "-b", "outside", outside)
+
+	source := setupTestRepo(t)
+	run(root, "-C", primary, "-c", "protocol.file.allow=always", "submodule", "add", source, "vendor/source")
+	run(primary, "commit", "-am", "add submodule")
+
+	infos := map[string]RepoInfo{}
+	for result := range Discover(context.Background(), DiscoveryOptions{RootDir: root, Recursive: true, Git: NewExecGit()}) {
+		if result.Local {
+			infos[result.Repo.Path] = result.Repo
+		}
+	}
+	if len(infos) != 2 {
+		t.Fatalf("discovered %d worktrees, want primary and linked: %#v", len(infos), infos)
+	}
+	primaryInfo, ok := infos[primary]
+	if !ok || primaryInfo.LinkedWorktree || primaryInfo.CommonGitDir == "" {
+		t.Errorf("primary info = %#v", primaryInfo)
+	}
+	linkedInfo, ok := infos[linked]
+	if !ok || !linkedInfo.LinkedWorktree || linkedInfo.CommonGitDir != primaryInfo.CommonGitDir {
+		t.Errorf("linked info = %#v, primary = %#v", linkedInfo, primaryInfo)
+	}
+	if _, ok := infos[outside]; ok {
+		t.Error("worktree outside selected root was discovered")
+	}
+}
+
+func TestTryClearStaleLocksInLinkedWorktree(t *testing.T) {
+	orig := staleLockThreshold
+	staleLockThreshold = 50 * time.Millisecond
+	t.Cleanup(func() { staleLockThreshold = orig })
+	primary := setupTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "linked")
+	cmd := exec.Command("git", "worktree", "add", "-b", "feature", linked)
+	cmd.Dir = primary
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %s: %v", out, err)
+	}
+	gitDir, err := NewExecGit().gitDir(context.Background(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(gitDir, "index.lock")
+	if err := os.WriteFile(lock, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Second)
+	if err := os.Chtimes(lock, past, past); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := tryClearStaleLocks(linked)
+	if err != nil || len(cleared) != 1 || cleared[0] != lock {
+		t.Fatalf("cleared=%v err=%v, want %s", cleared, err, lock)
+	}
+}
+
 func TestSwitchBranch(t *testing.T) {
 	dir := setupTestRepo(t)
 	g := NewExecGit()
@@ -379,7 +454,7 @@ func TestTryClearStaleLocks(t *testing.T) {
 
 	makeRepoDirs := func(t *testing.T) string {
 		t.Helper()
-		root := t.TempDir()
+		root := setupTestRepo(t)
 		for _, sub := range []string{".git", ".git/refs/remotes/origin", ".git/refs/heads"} {
 			if err := os.MkdirAll(filepath.Join(root, sub), 0755); err != nil {
 				t.Fatal(err)

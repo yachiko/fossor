@@ -99,6 +99,7 @@ fossor ~/work -r --no-fetch
 | `d` / `D` | Switch to default branch (selected / all) |
 | `o`       | Open in external editor (requires `--open-cmd` / `$FOSSOR_OPEN_CMD`) |
 | `j` / `k` | Move cursor down / up                     |
+| `Space`   | Collapse / expand the selected worktree group |
 | `q`       | Quit                                      |
 
 ### Manage View -- Status Tab
@@ -174,7 +175,7 @@ make check
 # Update dependencies
 make update
 
-# Create test repositories (20 repos with various states)
+# Create test repositories (including a primary/linked worktree family)
 make testdata
 
 # Reset test repos to initial state

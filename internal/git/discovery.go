@@ -15,13 +15,14 @@ const (
 
 // DiscoveryResult carries a discovered repo or indicates completion.
 type DiscoveryResult struct {
-	Repo      RepoInfo
-	FetchErr  error
-	Path      string
-	Skipped   bool
-	Revision  uint64
-	Local     bool
-	LocalDone bool
+	Repo           RepoInfo
+	FetchErr       error
+	Path           string
+	Skipped        bool
+	Revision       uint64
+	CoordinatorKey string
+	Local          bool
+	LocalDone      bool
 }
 
 // DiscoveryOptions configures discovery behavior.
@@ -42,7 +43,7 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 
 	go func() {
 		defer close(ch)
-		repoPaths := findRepos(ctx, opts.RootDir, opts.Recursive)
+		repoPaths := findRepos(ctx, opts.RootDir, opts.Recursive, opts.Git)
 		paths := make(chan string)
 		var refreshInput chan RepoInfo
 		refreshes := make(chan RepoInfo)
@@ -170,11 +171,12 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 	var fetchErr error
 	if coordinator != nil {
 		var ran bool
-		revision, ran, fetchErr = coordinator.Run(ctx, rp, false, func(ctx context.Context) error {
+		key := local.CoordinatorKey()
+		revision, ran, fetchErr = coordinator.Run(ctx, key, false, func(ctx context.Context) error {
 			return g.Fetch(ctx, rp)
 		})
 		if !ran {
-			return DiscoveryResult{Path: rp, Skipped: true, Revision: revision}
+			return DiscoveryResult{Path: rp, Skipped: true, Revision: revision, CoordinatorKey: key}
 		}
 	} else {
 		fetchErr = g.Fetch(ctx, rp)
@@ -194,7 +196,7 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 			info.Status = computeStatus(info)
 		}
 	}
-	return DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision}
+	return DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision, CoordinatorKey: local.CoordinatorKey()}
 }
 
 func sendDiscovery(ctx context.Context, ch chan<- DiscoveryResult, result DiscoveryResult) bool {
@@ -224,9 +226,18 @@ func sendRepo(ctx context.Context, ch chan<- RepoInfo, repo RepoInfo) bool {
 	}
 }
 
-// findRepos returns paths to directories containing .git.
-func findRepos(ctx context.Context, root string, recursive bool) []string {
+// findRepos returns worktree roots physically within root. A detector validates
+// .git directories and pointer files when the Git implementation supports it.
+func findRepos(ctx context.Context, root string, recursive bool, g Git) []string {
 	var repos []string
+	valid := func(path string) bool {
+		if detector, ok := g.(interface {
+			IsWorktree(context.Context, string) bool
+		}); ok {
+			return detector.IsWorktree(ctx, path)
+		}
+		return true
+	}
 
 	if recursive {
 		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -236,9 +247,13 @@ func findRepos(ctx context.Context, root string, recursive bool) []string {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if d.IsDir() && d.Name() == ".git" {
-				repos = append(repos, filepath.Dir(path))
-				return filepath.SkipDir
+			if d.Name() == ".git" && (d.IsDir() || d.Type().IsRegular()) {
+				if repo := filepath.Dir(path); valid(repo) {
+					repos = append(repos, repo)
+				}
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		})
@@ -252,7 +267,7 @@ func findRepos(ctx context.Context, root string, recursive bool) []string {
 				continue
 			}
 			gitDir := filepath.Join(root, e.Name(), ".git")
-			if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+			if info, err := os.Stat(gitDir); err == nil && (info.IsDir() || info.Mode().IsRegular()) && valid(filepath.Join(root, e.Name())) {
 				repos = append(repos, filepath.Join(root, e.Name()))
 			}
 		}

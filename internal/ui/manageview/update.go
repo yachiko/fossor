@@ -1,6 +1,7 @@
 package manageview
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -26,6 +27,11 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 // HandleInternalMsg processes internal messages. Returns true if handled.
 func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case remoteOperationReadyMsg:
+		return true, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
+			msg.release()
+			return execFinishedMsg{action: msg.action, err: err}
+		})
 	case execFinishedMsg:
 		m.lastAction = msg.action
 		m.lastErr = msg.err
@@ -534,6 +540,17 @@ func (m *Model) updateInput(msg tea.Msg) tea.Cmd {
 func (m *Model) executeAction(action Action, input string) tea.Cmd {
 	cmd := action.BuildCmd(m.Repo, input)
 	actionName := action.Name
+	if action.Category == CatRemote && m.Coordinator != nil {
+		coordinator := m.Coordinator
+		key := m.Repo.CoordinatorKey()
+		return func() tea.Msg {
+			_, ran, release, err := coordinator.Acquire(context.Background(), key, true)
+			if err != nil || !ran {
+				return execFinishedMsg{action: actionName, err: err}
+			}
+			return remoteOperationReadyMsg{action: actionName, cmd: cmd, release: release}
+		}
+	}
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return execFinishedMsg{action: actionName, err: err}
 	})

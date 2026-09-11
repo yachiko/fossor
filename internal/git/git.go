@@ -52,6 +52,17 @@ func (g *ExecGit) run(ctx context.Context, path string, args ...string) (string,
 	return runGitOnce(ctx, path, args...)
 }
 
+// IsWorktree validates both regular and linked worktrees and rejects
+// submodules, which are intentionally not independent Fossor repositories.
+func (g *ExecGit) IsWorktree(ctx context.Context, path string) bool {
+	inside, err := runGitOnce(ctx, path, "rev-parse", "--is-inside-work-tree")
+	if err != nil || inside != "true" {
+		return false
+	}
+	superproject, err := runGitOnce(ctx, path, "rev-parse", "--show-superproject-working-tree")
+	return err == nil && superproject == ""
+}
+
 func runGitOnce(ctx context.Context, path string, args ...string) (string, error) {
 	allArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", allArgs...)
@@ -114,23 +125,33 @@ func looksLikeLockError(s string) bool {
 	return false
 }
 
-// tryClearStaleLocks scans the well-known lock files under repoPath/.git and
+// tryClearStaleLocks scans the well-known lock files under the resolved git dir and
 // removes any that look genuinely abandoned (mtime older than
 // staleLockThreshold and not held by any process per lsof, if available). It
 // returns the list of removed paths. Never removes a lock that could still be
 // held by a live process.
 func tryClearStaleLocks(repoPath string) ([]string, error) {
-	gitDir := filepath.Join(repoPath, ".git")
-	candidates := []string{
-		filepath.Join(gitDir, "index.lock"),
-		filepath.Join(gitDir, "HEAD.lock"),
-		filepath.Join(gitDir, "packed-refs.lock"),
+	gitDir, err := runGitOnce(context.Background(), repoPath, "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return nil, err
 	}
-	if matches, err := filepath.Glob(filepath.Join(gitDir, "refs", "remotes", "origin", "*.lock")); err == nil {
-		candidates = append(candidates, matches...)
+	gitDirs := []string{gitDir}
+	if commonDir, err := runGitOnce(context.Background(), repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && filepath.Clean(commonDir) != filepath.Clean(gitDir) {
+		gitDirs = append(gitDirs, commonDir)
 	}
-	if matches, err := filepath.Glob(filepath.Join(gitDir, "refs", "heads", "*.lock")); err == nil {
-		candidates = append(candidates, matches...)
+	var candidates []string
+	for _, dir := range gitDirs {
+		candidates = append(candidates,
+			filepath.Join(dir, "index.lock"),
+			filepath.Join(dir, "HEAD.lock"),
+			filepath.Join(dir, "packed-refs.lock"),
+		)
+		if matches, err := filepath.Glob(filepath.Join(dir, "refs", "remotes", "origin", "*.lock")); err == nil {
+			candidates = append(candidates, matches...)
+		}
+		if matches, err := filepath.Glob(filepath.Join(dir, "refs", "heads", "*.lock")); err == nil {
+			candidates = append(candidates, matches...)
+		}
 	}
 
 	var cleared []string
@@ -193,12 +214,14 @@ func lockHasHolder(lock string) bool {
 }
 
 func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
-	// Fast path: read symref file directly (avoids spawning git)
-	if data, err := os.ReadFile(filepath.Join(path, ".git", "refs", "remotes", "origin", "HEAD")); err == nil {
-		ref := strings.TrimSpace(string(data))
-		const prefix = "ref: refs/remotes/origin/"
-		if strings.HasPrefix(ref, prefix) {
-			return Sanitize(ref[len(prefix):])
+	// Fast path: read symref file directly from Git's resolved common dir.
+	if commonDir, err := g.commonGitDir(ctx, path); err == nil {
+		if data, err := os.ReadFile(filepath.Join(commonDir, "refs", "remotes", "origin", "HEAD")); err == nil {
+			ref := strings.TrimSpace(string(data))
+			const prefix = "ref: refs/remotes/origin/"
+			if strings.HasPrefix(ref, prefix) {
+				return Sanitize(ref[len(prefix):])
+			}
 		}
 	}
 
@@ -211,9 +234,9 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 		}
 	}
 
-	// Check common branch names via filesystem first
+	// Check common branch names through Git so packed refs and linked worktrees work.
 	for _, name := range []string{"main", "master"} {
-		if _, err := os.Stat(filepath.Join(path, ".git", "refs", "heads", name)); err == nil {
+		if _, err := g.run(ctx, path, "show-ref", "--verify", "--quiet", "refs/heads/"+name); err == nil {
 			return name
 		}
 	}
@@ -355,9 +378,23 @@ func (g *ExecGit) GetRepoInfo(ctx context.Context, path string) (RepoInfo, error
 	info.Changes = si.changes
 
 	info.DefaultBranch = g.DetectDefaultBranch(ctx, path)
+	if commonDir, err := g.commonGitDir(ctx, path); err == nil {
+		info.CommonGitDir = commonDir
+		if gitDir, err := g.gitDir(ctx, path); err == nil {
+			info.LinkedWorktree = filepath.Clean(gitDir) != filepath.Clean(commonDir)
+		}
+	}
 
 	info.Status = computeStatus(info)
 	return info, nil
+}
+
+func (g *ExecGit) commonGitDir(ctx context.Context, path string) (string, error) {
+	return g.run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+}
+
+func (g *ExecGit) gitDir(ctx context.Context, path string) (string, error) {
+	return g.run(ctx, path, "rev-parse", "--path-format=absolute", "--git-dir")
 }
 
 // getStatusInfo runs a single git command to get branch, ahead/behind, and change count.

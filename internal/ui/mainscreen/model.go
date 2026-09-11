@@ -74,6 +74,15 @@ type Model struct {
 	height       int
 	statusMsg    string
 	verification map[string]VerificationState
+	collapsed    map[string]bool
+}
+
+type tableRow struct {
+	repoIndex int
+	groupKey  string
+	groupName string
+	groupSize int
+	groupRoot bool
 }
 
 // New creates a new main screen model.
@@ -90,6 +99,7 @@ func New(g git.Git, rootDir, openCmd string, coordinators ...*git.OperationCoord
 		sortAsc:      true,
 		searchText:   ti,
 		verification: make(map[string]VerificationState),
+		collapsed:    make(map[string]bool),
 	}
 	if len(coordinators) > 0 {
 		m.Coordinator = coordinators[0]
@@ -185,22 +195,75 @@ func (m *Model) IsActionable(repo git.RepoInfo) bool {
 
 // SelectedRepo returns the currently selected repo, if any.
 func (m *Model) SelectedRepo() (git.RepoInfo, bool) {
-	indices := m.visibleIndices()
-	if len(indices) == 0 || m.cursor >= len(indices) {
+	rows := m.visibleRows()
+	if len(rows) == 0 || m.cursor >= len(rows) || rows[m.cursor].repoIndex < 0 {
 		return git.RepoInfo{}, false
 	}
-	return m.Repos[indices[m.cursor]], true
+	return m.Repos[rows[m.cursor].repoIndex], true
 }
 
+// visibleIndices returns actionable checkout rows, never group headers.
 func (m *Model) visibleIndices() []int {
+	rows := m.visibleRows()
+	indices := make([]int, 0, len(rows))
+	for _, row := range rows {
+		if row.repoIndex >= 0 {
+			indices = append(indices, row.repoIndex)
+		}
+	}
+	return indices
+}
+
+func (m *Model) visibleRows() []tableRow {
+	var indices []int
 	if m.filtered != nil {
-		return m.filtered
+		indices = m.filtered
+	} else {
+		indices = make([]int, len(m.Repos))
+		for i := range indices {
+			indices[i] = i
+		}
 	}
-	idx := make([]int, len(m.Repos))
-	for i := range idx {
-		idx[i] = i
+	groups := make(map[string][]int)
+	var order []string
+	for _, i := range indices {
+		key := m.Repos[i].CoordinatorKey()
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], i)
 	}
-	return idx
+	rows := make([]tableRow, 0, len(indices))
+	for _, key := range order {
+		members := groups[key]
+		if len(members) < 2 {
+			rows = append(rows, tableRow{repoIndex: members[0]})
+			continue
+		}
+		primary := -1
+		groupName := m.Repos[members[0]].Name
+		for _, i := range members {
+			if !m.Repos[i].LinkedWorktree {
+				groupName = m.Repos[i].Name
+				primary = i
+				break
+			}
+		}
+		if primary >= 0 {
+			rows = append(rows, tableRow{repoIndex: primary, groupKey: key, groupSize: len(members), groupRoot: true})
+		} else {
+			rows = append(rows, tableRow{repoIndex: -1, groupKey: key, groupName: groupName, groupSize: len(members)})
+		}
+		if !m.collapsed[key] {
+			for _, i := range members {
+				if i == primary {
+					continue
+				}
+				rows = append(rows, tableRow{repoIndex: i, groupKey: key})
+			}
+		}
+	}
+	return rows
 }
 
 func (m *Model) refilter() {
@@ -210,6 +273,7 @@ func (m *Model) refilter() {
 
 	if query == "" && m.filterMode == FilterAll {
 		m.filtered = nil
+		m.clampCursor()
 		return
 	}
 
@@ -220,16 +284,18 @@ func (m *Model) refilter() {
 		}
 		if query != "" {
 			if !strings.Contains(strings.ToLower(r.Name), query) &&
+				!strings.Contains(strings.ToLower(r.Path), query) &&
+				!strings.Contains(strings.ToLower(r.CommonGitDir), query) &&
 				!strings.Contains(strings.ToLower(r.Branch), query) &&
+				!strings.Contains(strings.ToLower(r.DefaultBranch), query) &&
+				!strings.Contains(strings.ToLower(r.Remote), query) &&
 				!strings.Contains(strings.ToLower(r.Status.String()), query) {
 				continue
 			}
 		}
 		m.filtered = append(m.filtered, i)
 	}
-	if m.cursor >= len(m.visibleIndices()) {
-		m.cursor = max(0, len(m.visibleIndices())-1)
-	}
+	m.clampCursor()
 }
 
 func (m *Model) matchesFilter(r git.RepoInfo) bool {
@@ -335,7 +401,7 @@ func (m *Model) sortRepos() {
 }
 
 func (m *Model) clampCursor() {
-	vis := m.visibleIndices()
+	vis := m.visibleRows()
 	if m.cursor < 0 {
 		m.cursor = 0
 	}

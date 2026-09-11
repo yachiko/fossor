@@ -127,7 +127,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, waitForDiscovery(msg.Ch)
 		}
 		a.refreshDone++
-		if !msg.Skipped && a.coordinator.IsCurrent(msg.Path, msg.Revision) {
+		// Discovery refreshes for sibling worktrees share one coordinator key.
+		// A later sibling fetch advances that key's revision but must not discard
+		// this checkout's completed status result.
+		if !msg.Skipped {
 			a.liveRepos[msg.Repo.Path] = msg.Repo
 			a.localRepos[msg.Repo.Path] = msg.Repo
 			a.saveLocalRepos()
@@ -163,7 +166,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case common.SwitchToManageMsg:
-		fm := manageview.New(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified)
+		fm := manageview.NewWithCoordinator(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified, a.coordinator)
 		fm.SetSize(a.width, a.height)
 		a.manageModel = &fm
 		a.screen = screenManage
@@ -217,11 +220,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.mainScreen.SetStatus(status)
 		g := a.git
-		name := msg.RepoName
+		path := msg.Path
 		done := msg.Done
 		refreshCmd := func() tea.Msg {
 			for _, r := range a.mainScreen.Repos {
-				if r.Name == name {
+				if r.Path == path {
 					ctx := context.Background()
 					updated, _ := g.GetRepoInfo(ctx, r.Path)
 					return common.RepoUpdatedMsg{Repo: updated}

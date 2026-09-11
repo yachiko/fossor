@@ -49,6 +49,18 @@ type RepoInfo struct {
 	Changes       int
 	Status        RepoStatus
 	Error         error
+	// CommonGitDir identifies all checkouts that share refs and remotes.
+	CommonGitDir   string
+	LinkedWorktree bool
+}
+
+// CoordinatorKey identifies the shared git state that remote operations must
+// serialize. Repositories without resolved metadata retain path-level safety.
+func (r RepoInfo) CoordinatorKey() string {
+	if r.CommonGitDir != "" {
+		return r.CommonGitDir
+	}
+	return r.Path
 }
 
 // CommitInfo represents a single commit.
