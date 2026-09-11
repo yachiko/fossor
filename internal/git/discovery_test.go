@@ -11,12 +11,15 @@ import (
 )
 
 type discoveryTestGit struct {
-	mu        sync.Mutex
-	fetched   []string
-	fetchErr  map[string]error
-	infoErr   map[string]error
-	infoHook  func(string)
-	fetchHook func(string)
+	mu                 sync.Mutex
+	fetched            []string
+	fetchErr           map[string]error
+	infoErr            map[string]error
+	infoHook           func(string)
+	fetchHook          func(string)
+	remoteDefault      string
+	remoteDefaultErr   error
+	remoteDefaultCalls int
 }
 
 func (g *discoveryTestGit) GetRepoInfo(_ context.Context, path string) (RepoInfo, error) {
@@ -27,11 +30,17 @@ func (g *discoveryTestGit) GetRepoInfo(_ context.Context, path string) (RepoInfo
 	if hook != nil {
 		hook(path)
 	}
-	return RepoInfo{Name: filepath.Base(path), Path: path, Status: StatusUpToDate}, err
+	return RepoInfo{Name: filepath.Base(path), Path: path, Branch: "main", DefaultBranch: "main", Status: StatusUpToDate}, err
 }
 func (g *discoveryTestGit) DetectDefaultBranch(context.Context, string) string { return "main" }
-func (g *discoveryTestGit) GetBranch(context.Context, string) (string, error)  { return "main", nil }
-func (g *discoveryTestGit) GetRemote(context.Context, string) (string, error)  { return "origin", nil }
+func (g *discoveryTestGit) GetRemoteDefaultBranch(context.Context, string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.remoteDefaultCalls++
+	return g.remoteDefault, g.remoteDefaultErr
+}
+func (g *discoveryTestGit) GetBranch(context.Context, string) (string, error) { return "main", nil }
+func (g *discoveryTestGit) GetRemote(context.Context, string) (string, error) { return "origin", nil }
 func (g *discoveryTestGit) GetAheadBehind(context.Context, string, string) (int, int, error) {
 	return 0, 0, nil
 }
@@ -128,6 +137,64 @@ func TestDiscoverNoFetchIsLocalOnly(t *testing.T) {
 	}
 	if len(g.fetched) != 0 {
 		t.Fatalf("fetches = %v, want none", g.fetched)
+	}
+}
+
+func TestDiscoverNoFetchUsesCachedDefaultBranch(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(path, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	g := &discoveryTestGit{fetchErr: make(map[string]error), infoErr: make(map[string]error)}
+	results := []DiscoveryResult{}
+	for result := range Discover(context.Background(), DiscoveryOptions{
+		RootDir: root,
+		Git:     g,
+		CachedRepos: map[string]RepoInfo{
+			path: {Path: path, DefaultBranch: "develop"},
+		},
+	}) {
+		results = append(results, result)
+	}
+	if got := results[0].Repo; got.DefaultBranch != "develop" || got.Status != StatusNonDefault {
+		t.Errorf("local repo = %#v, want cached default branch develop and non-default status", got)
+	}
+	if g.remoteDefaultCalls != 0 {
+		t.Errorf("remote default queries = %d, want none", g.remoteDefaultCalls)
+	}
+}
+
+func TestRefreshRepoUsesRemoteDefaultBranch(t *testing.T) {
+	g := &discoveryTestGit{
+		fetchErr:      make(map[string]error),
+		infoErr:       make(map[string]error),
+		remoteDefault: "develop",
+	}
+	result := refreshRepo(context.Background(), RepoInfo{Path: "/repo", Branch: "main", DefaultBranch: "main"}, g, nil)
+	if result.FetchErr != nil {
+		t.Fatalf("FetchErr = %v, want nil", result.FetchErr)
+	}
+	if result.Repo.DefaultBranch != "develop" || result.Repo.Status != StatusNonDefault {
+		t.Errorf("repo = %#v, want remote default branch develop and non-default status", result.Repo)
+	}
+	if g.remoteDefaultCalls != 1 {
+		t.Errorf("remote default queries = %d, want 1", g.remoteDefaultCalls)
+	}
+}
+
+func TestRefreshRepoRetainsLocalDefaultWhenRemoteQueryFails(t *testing.T) {
+	g := &discoveryTestGit{
+		fetchErr:         make(map[string]error),
+		infoErr:          make(map[string]error),
+		remoteDefaultErr: errors.New("remote unavailable"),
+	}
+	result := refreshRepo(context.Background(), RepoInfo{Path: "/repo", Branch: "main", DefaultBranch: "develop"}, g, nil)
+	if result.FetchErr != nil {
+		t.Fatalf("FetchErr = %v, want nil", result.FetchErr)
+	}
+	if result.Repo.DefaultBranch != "develop" {
+		t.Errorf("default branch = %q, want cached local value develop", result.Repo.DefaultBranch)
 	}
 }
 

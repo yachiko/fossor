@@ -51,6 +51,44 @@ func TestDetectDefaultBranch(t *testing.T) {
 	}
 }
 
+func TestGetRemoteDefaultBranchDoesNotUpdateOriginHEAD(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	clone := filepath.Join(root, "clone")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	run(root, "init", "--bare", "--initial-branch=main", bare)
+	run(root, "clone", bare, clone)
+	run(clone, "config", "user.email", "test@test.com")
+	run(clone, "config", "user.name", "Test")
+	run(clone, "commit", "--allow-empty", "-m", "initial commit")
+	run(clone, "push", "origin", "main")
+	run(clone, "switch", "-c", "develop")
+	run(clone, "push", "origin", "develop")
+	run(bare, "symbolic-ref", "HEAD", "refs/heads/develop")
+
+	headPath := filepath.Join(clone, ".git", "refs", "remotes", "origin", "HEAD")
+	if _, err := os.Stat(headPath); !os.IsNotExist(err) {
+		t.Fatalf("origin HEAD exists before query: %v", err)
+	}
+	branch, err := NewExecGit().GetRemoteDefaultBranch(context.Background(), clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "develop" {
+		t.Errorf("default branch = %q, want develop", branch)
+	}
+	if _, err := os.Stat(headPath); !os.IsNotExist(err) {
+		t.Errorf("GetRemoteDefaultBranch created refs/remotes/origin/HEAD: %v", err)
+	}
+}
+
 func TestGetChanges(t *testing.T) {
 	dir := setupTestRepo(t)
 	g := NewExecGit()

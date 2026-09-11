@@ -31,6 +31,7 @@ type DiscoveryOptions struct {
 	Git         Git
 	Fetch       bool
 	Coordinator *OperationCoordinator
+	CachedRepos map[string]RepoInfo
 }
 
 // Discover streams each local status before queuing its optional remote refresh.
@@ -55,6 +56,10 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 					info, err := opts.Git.GetRepoInfo(ctx, path)
 					if err != nil {
 						continue
+					}
+					if cached, ok := opts.CachedRepos[path]; ok && cached.DefaultBranch != "" {
+						info.DefaultBranch = cached.DefaultBranch
+						info.Status = computeStatus(info)
 					}
 					if !sendDiscovery(ctx, ch, DiscoveryResult{Repo: info, Path: path, Local: true}) {
 						return
@@ -178,6 +183,16 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 	if err != nil {
 		info = local
 		fetchErr = errors.Join(fetchErr, err)
+	}
+	if local.DefaultBranch != "" {
+		info.DefaultBranch = local.DefaultBranch
+		info.Status = computeStatus(info)
+	}
+	if fetchErr == nil {
+		if branch, err := g.GetRemoteDefaultBranch(ctx, rp); err == nil && branch != "" {
+			info.DefaultBranch = branch
+			info.Status = computeStatus(info)
+		}
 	}
 	return DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision}
 }

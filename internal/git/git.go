@@ -16,6 +16,7 @@ import (
 type Git interface {
 	GetRepoInfo(ctx context.Context, path string) (RepoInfo, error)
 	DetectDefaultBranch(ctx context.Context, path string) string
+	GetRemoteDefaultBranch(ctx context.Context, path string) (string, error)
 	GetBranch(ctx context.Context, path string) (string, error)
 	GetRemote(ctx context.Context, path string) (string, error)
 	GetAheadBehind(ctx context.Context, path, branch string) (int, int, error)
@@ -218,6 +219,25 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 	}
 
 	return "main"
+}
+
+// GetRemoteDefaultBranch returns origin's advertised HEAD branch without
+// changing any local refs.
+func (g *ExecGit) GetRemoteDefaultBranch(ctx context.Context, path string) (string, error) {
+	out, err := g.run(ctx, path, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD" {
+			const prefix = "refs/heads/"
+			if strings.HasPrefix(fields[1], prefix) {
+				return Sanitize(fields[1][len(prefix):]), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("remote HEAD symref not found")
 }
 
 func (g *ExecGit) GetBranch(ctx context.Context, path string) (string, error) {
