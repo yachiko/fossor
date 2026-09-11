@@ -129,6 +129,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.refreshDone++
 		if !msg.Skipped && a.coordinator.IsCurrent(msg.Path, msg.Revision) {
 			a.liveRepos[msg.Repo.Path] = msg.Repo
+			a.localRepos[msg.Repo.Path] = msg.Repo
+			a.saveLocalRepos()
 			a.mainScreen.UpdateRepo(msg.Repo)
 			if msg.FetchErr != nil {
 				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
@@ -301,7 +303,9 @@ func (a *App) startDiscovery() tea.Cmd {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancelCtx = cancel
+	cachedRepos := make(map[string]git.RepoInfo)
 	for _, repo := range git.LoadDiscoveryCache(a.rootDir, a.recursive) {
+		cachedRepos[repo.Path] = repo
 		a.mainScreen.AddCachedRepo(repo)
 	}
 
@@ -311,6 +315,7 @@ func (a *App) startDiscovery() tea.Cmd {
 		Git:         a.git,
 		Fetch:       !a.noFetch,
 		Coordinator: a.coordinator,
+		CachedRepos: cachedRepos,
 	}
 
 	ch := git.Discover(ctx, opts)
@@ -332,6 +337,10 @@ func (a *App) finishLocalScan() {
 		paths[path] = true
 	}
 	a.mainScreen.Prune(paths)
+	a.saveLocalRepos()
+}
+
+func (a *App) saveLocalRepos() {
 	repos := make([]git.RepoInfo, 0, len(a.localRepos))
 	for _, repo := range a.localRepos {
 		repos = append(repos, repo)

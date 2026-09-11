@@ -23,7 +23,7 @@ If `path` doesn't exist or isn't a directory, Fossor exits with a non-zero statu
 | Flag                       | Default | Description                                                                                                                                             |
 | -------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-r`, `--recursive`        | `false` | Recursively scan for git repositories under `path`. Without this, only direct subdirectories are checked.                                                |
-| `--no-fetch`               | `false` | Skip `git fetch` during discovery. Ahead / behind counts will reflect cached refs.                                                                       |
+| `--no-fetch`               | `false` | Skip `git fetch` during discovery. Ahead / behind counts and the cached remote default branch reflect locally cached data.                                |
 | `--no-auto-refresh`        | `false` | Disable the 30-second background refresh of the highlighted repo on the main screen.                                                                     |
 | `--open-cmd <cmd>`         | unset   | Command used to open the selected repo (`o` key on main screen). Falls back to `$FOSSOR_OPEN_CMD` when empty. Hidden from `--help` when neither is set.  |
 | `--version`                | —       | Print the version and exit. Source: `-ldflags` injection at build time, then `debug.ReadBuildInfo()` fallback for `go install`-built binaries.           |

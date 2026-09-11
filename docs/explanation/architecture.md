@@ -53,9 +53,9 @@ Walk directory ──► per-repo goroutine ──► channel ──► tea.Msg
 Each goroutine constructs a `RepoInfo` by calling `Git.GetRepoInfo`, which under the hood runs:
 
 - `git rev-parse --abbrev-ref HEAD` (branch)
-- `git ls-remote --symref origin HEAD` or fallback (default branch)
 - `git remote get-url origin` (remote URL)
 - Optional `git fetch` (skipped with `--no-fetch`)
+- After a successful fetch, `git ls-remote --symref origin HEAD` refreshes the cached default branch
 - `git rev-list --left-right --count` (ahead/behind)
 - `git status --porcelain=v1` (changes)
 
