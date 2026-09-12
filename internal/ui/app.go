@@ -35,17 +35,20 @@ type App struct {
 	mainScreen  mainscreen.Model
 	manageModel *manageview.Model
 
-	discovering  bool
-	discovered   int
-	liveRepos    map[string]git.RepoInfo
-	localRepos   map[string]git.RepoInfo
-	localDone    bool
-	refreshTotal int
-	refreshDone  int
-	spinner      spinner.Model
-	cancelCtx    context.CancelFunc
-	cancelled    bool
-	coordinator  *git.OperationCoordinator
+	discovering         bool
+	discovered          int
+	liveRepos           map[string]git.RepoInfo
+	localRepos          map[string]git.RepoInfo
+	localDone           bool
+	refreshTotal        int
+	refreshDone         int
+	spinner             spinner.Model
+	cancelCtx           context.CancelFunc
+	cancelled           bool
+	coordinator         *git.OperationCoordinator
+	manageSession       uint64
+	discoveryGeneration uint64
+	userUpdateDiscovery map[string]uint64
 
 	width  int
 	height int
@@ -61,15 +64,16 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, o
 
 	coordinator := git.NewOperationCoordinator()
 	return &App{
-		git:           g,
-		rootDir:       rootDir,
-		recursive:     recursive,
-		noFetch:       noFetch,
-		noAutoRefresh: noAutoRefresh,
-		openCmd:       openCmd,
-		coordinator:   coordinator,
-		mainScreen:    mainscreen.New(g, rootDir, openCmd, coordinator),
-		spinner:       s,
+		git:                 g,
+		rootDir:             rootDir,
+		recursive:           recursive,
+		noFetch:             noFetch,
+		noAutoRefresh:       noAutoRefresh,
+		openCmd:             openCmd,
+		coordinator:         coordinator,
+		mainScreen:          mainscreen.New(g, rootDir, openCmd, coordinator),
+		userUpdateDiscovery: make(map[string]uint64),
+		spinner:             s,
 	}
 }
 
@@ -113,24 +117,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case common.RepoDiscoveredMsg:
 		if msg.Local {
+			superseded := a.discoverySuperseded(msg.Repo.Path, msg.DiscoveryGeneration)
 			a.discovered++
 			a.localRepos[msg.Repo.Path] = msg.Repo
 			a.liveRepos[msg.Repo.Path] = msg.Repo
-			a.mainScreen.UpdateRepo(msg.Repo)
-			if a.noFetch {
-				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
-			} else {
+			if !superseded {
+				a.mainScreen.UpdateRepo(msg.Repo)
+				if a.noFetch {
+					a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
+				} else {
+					a.refreshTotal++
+					a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Unverified)
+				}
+				a.updateManageVerification(msg.Repo.Path)
+			} else if !a.noFetch {
 				a.refreshTotal++
-				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Unverified)
 			}
 			a.mainScreen.SetStatus(a.scanStatus())
-			return a, waitForDiscovery(msg.Ch)
+			return a, waitForDiscovery(msg.Ch, msg.DiscoveryGeneration)
 		}
 		a.refreshDone++
 		// Discovery refreshes for sibling worktrees share one coordinator key.
 		// A later sibling fetch advances that key's revision but must not discard
 		// this checkout's completed status result.
-		if !msg.Skipped {
+		if !msg.Skipped && !a.discoverySuperseded(msg.Repo.Path, msg.DiscoveryGeneration) {
 			a.liveRepos[msg.Repo.Path] = msg.Repo
 			a.localRepos[msg.Repo.Path] = msg.Repo
 			a.saveLocalRepos()
@@ -140,13 +150,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
 			}
+			a.updateManageVerification(msg.Repo.Path)
 		}
 		if a.localDone {
 			a.mainScreen.SetStatus(a.refreshStatus())
 		} else {
 			a.mainScreen.SetStatus(a.scanStatus())
 		}
-		return a, waitForDiscovery(msg.Ch)
+		return a, waitForDiscovery(msg.Ch, msg.DiscoveryGeneration)
 
 	case common.DiscoveryCompleteMsg:
 		if msg.LocalDone && !a.cancelled {
@@ -154,7 +165,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !a.noFetch {
 				a.mainScreen.SetStatus(a.refreshStatus())
 			}
-			return a, waitForDiscovery(msg.Ch)
+			return a, waitForDiscovery(msg.Ch, msg.DiscoveryGeneration)
 		}
 		if msg.Complete {
 			if !a.localDone && !a.cancelled {
@@ -166,7 +177,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case common.SwitchToManageMsg:
-		fm := manageview.NewWithCoordinator(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified, a.coordinator)
+		a.manageSession++
+		fm := manageview.NewWithCoordinator(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified, a.coordinator, a.manageSession)
 		fm.SetSize(a.width, a.height)
 		a.manageModel = &fm
 		a.screen = screenManage
@@ -184,6 +196,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, refreshCmd
 
 	case common.RepoUpdatedMsg:
+		if msg.Source == common.RepoUpdateUserAction {
+			a.userUpdateDiscovery[msg.Repo.Path] = a.discoveryGeneration
+		}
 		a.mainScreen.UpdateRepo(msg.Repo)
 		if msg.RemoteError {
 			a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
@@ -192,6 +207,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if a.manageModel != nil && a.manageModel.Repo.Path == msg.Repo.Path {
 			a.manageModel.UpdateRepo(msg.Repo)
+			a.updateManageVerification(msg.Repo.Path)
 		}
 		return a, nil
 
@@ -227,7 +243,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if r.Path == path {
 					ctx := context.Background()
 					updated, _ := g.GetRepoInfo(ctx, r.Path)
-					return common.RepoUpdatedMsg{Repo: updated}
+					return common.RepoUpdatedMsg{Repo: updated, Source: common.RepoUpdateUserAction}
 				}
 			}
 			return nil
@@ -295,6 +311,7 @@ func (a *App) View() string {
 }
 
 func (a *App) startDiscovery() tea.Cmd {
+	a.discoveryGeneration++
 	a.discovering = true
 	a.discovered = 0
 	a.cancelled = false
@@ -322,7 +339,18 @@ func (a *App) startDiscovery() tea.Cmd {
 	}
 
 	ch := git.Discover(ctx, opts)
-	return waitForDiscovery(ch)
+	return waitForDiscovery(ch, a.discoveryGeneration)
+}
+
+func (a *App) updateManageVerification(path string) {
+	if a.manageModel != nil && a.manageModel.Repo.Path == path {
+		a.manageModel.SetVerified(a.mainScreen.Verification(path) == mainscreen.Verified)
+	}
+}
+
+func (a *App) discoverySuperseded(path string, generation uint64) bool {
+	updatedGeneration, ok := a.userUpdateDiscovery[path]
+	return ok && updatedGeneration == generation
 }
 
 func (a *App) refreshStatus() string {
@@ -364,15 +392,19 @@ func (a *App) scheduleClearStatus() tea.Cmd {
 }
 
 // waitForDiscovery reads one result from the channel and returns it as a message.
-func waitForDiscovery(ch <-chan git.DiscoveryResult) tea.Cmd {
+func waitForDiscovery(ch <-chan git.DiscoveryResult, generations ...uint64) tea.Cmd {
+	generation := uint64(0)
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
 	return func() tea.Msg {
 		result, ok := <-ch
 		if !ok {
-			return common.DiscoveryCompleteMsg{Complete: true}
+			return common.DiscoveryCompleteMsg{Complete: true, DiscoveryGeneration: generation}
 		}
 		if result.LocalDone {
-			return common.DiscoveryCompleteMsg{LocalDone: true, Ch: ch}
+			return common.DiscoveryCompleteMsg{LocalDone: true, DiscoveryGeneration: generation, Ch: ch}
 		}
-		return common.RepoDiscoveredMsg{Repo: result.Repo, FetchErr: result.FetchErr, Path: result.Path, Skipped: result.Skipped, Revision: result.Revision, Local: result.Local, Ch: ch}
+		return common.RepoDiscoveredMsg{Repo: result.Repo, FetchErr: result.FetchErr, Path: result.Path, Skipped: result.Skipped, Revision: result.Revision, DiscoveryGeneration: generation, Local: result.Local, Ch: ch}
 	}
 }
