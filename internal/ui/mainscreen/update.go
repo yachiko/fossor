@@ -206,7 +206,7 @@ func (m *Model) pullSelected() tea.Cmd {
 		func() tea.Msg {
 			ctx := context.Background()
 			updated, _ := g.GetRepoInfo(ctx, repo.Path)
-			return common.RepoUpdatedMsg{Repo: updated, Verified: operationErr == nil, RemoteError: operationErr != nil, Revision: revision}
+			return common.RepoUpdatedMsg{Repo: updated, Verified: operationErr == nil, RemoteError: operationErr != nil, Revision: revision, Source: common.RepoUpdateUserAction}
 		},
 	)
 }
@@ -240,7 +240,7 @@ func (m *Model) fetchSelected() tea.Cmd {
 		func() tea.Msg {
 			ctx := context.Background()
 			updated, _ := g.GetRepoInfo(ctx, repo.Path)
-			return common.RepoUpdatedMsg{Repo: updated, Verified: operationErr == nil, RemoteError: operationErr != nil, Revision: revision}
+			return common.RepoUpdatedMsg{Repo: updated, Verified: operationErr == nil, RemoteError: operationErr != nil, Revision: revision, Source: common.RepoUpdateUserAction}
 		},
 	)
 }
@@ -268,7 +268,7 @@ func (m *Model) switchDefaultSelected() tea.Cmd {
 		func() tea.Msg {
 			ctx := context.Background()
 			updated, _ := g.GetRepoInfo(ctx, repo.Path)
-			return common.RepoUpdatedMsg{Repo: updated}
+			return common.RepoUpdatedMsg{Repo: updated, Source: common.RepoUpdateUserAction}
 		},
 	)
 }

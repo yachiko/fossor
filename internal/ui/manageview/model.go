@@ -44,6 +44,17 @@ type Model struct {
 	verified                bool
 	verifyAfterRefresh      bool
 	remoteErrorAfterRefresh bool
+	sessionID               uint64
+
+	changesRequest    uint64
+	diffRequest       uint64
+	commitsRequest    uint64
+	remoteRequest     uint64
+	repoRequest       uint64
+	stashRequest      uint64
+	stashDiffRequest  uint64
+	branchesRequest   uint64
+	stagedDiffRequest uint64
 
 	activeTab int
 
@@ -111,53 +122,83 @@ type branchInfo struct {
 // Internal messages
 
 type execFinishedMsg struct {
-	action string
-	err    error
+	action  string
+	err     error
+	session uint64
 }
 
 type remoteOperationReadyMsg struct {
 	action  string
 	cmd     *exec.Cmd
 	release func()
+	session uint64
 }
 
 type stashInfoMsg struct {
-	info string
+	info    string
+	session uint64
+	path    string
+	request uint64
 }
 
 type repoRefreshedMsg struct {
-	repo        git.RepoInfo
-	verified    bool
-	remoteError bool
+	repo              git.RepoInfo
+	verified          bool
+	remoteError       bool
+	verificationKnown bool
+	session           uint64
+	path              string
+	request           uint64
 }
 
 type changesLoadedMsg struct {
 	changes []git.ChangeInfo
+	session uint64
+	path    string
+	request uint64
 }
 
 type diffLoadedMsg struct {
-	path string
-	diff string
+	path    string
+	diff    string
+	session uint64
+	request uint64
 }
 
 type commitsLoadedMsg struct {
 	commits []git.CommitInfo
+	session uint64
+	path    string
+	request uint64
 }
 
 type remoteLoadedMsg struct {
-	remote string
+	remote  string
+	session uint64
+	path    string
+	request uint64
 }
 
 type stashDiffLoadedMsg struct {
-	diff string
+	diff    string
+	entry   string
+	session uint64
+	path    string
+	request uint64
 }
 
 type stagedDiffLoadedMsg struct {
-	diff string
+	diff    string
+	session uint64
+	path    string
+	request uint64
 }
 
 type branchesLoadedMsg struct {
 	branches []branchInfo
+	session  uint64
+	path     string
+	request  uint64
 }
 
 // New creates a new manage screen model.
@@ -171,8 +212,10 @@ func New(g git.Git, repo git.RepoInfo, verified ...bool) Model {
 
 // NewWithCoordinator creates a manage view whose remote actions share the
 // main screen's worktree-family coordinator.
-func NewWithCoordinator(g git.Git, repo git.RepoInfo, verified bool, coordinator *git.OperationCoordinator) Model {
-	return newModel(g, repo, verified, coordinator)
+func NewWithCoordinator(g git.Git, repo git.RepoInfo, verified bool, coordinator *git.OperationCoordinator, sessionID uint64) Model {
+	m := newModel(g, repo, verified, coordinator)
+	m.sessionID = sessionID
+	return m
 }
 
 func newModel(g git.Git, repo git.RepoInfo, isVerified bool, coordinator *git.OperationCoordinator) Model {
@@ -228,15 +271,22 @@ func (m *Model) UpdateRepo(repo git.RepoInfo) {
 	m.Repo = repo
 }
 
+// SetVerified updates remote verification supplied by the application shell.
+func (m *Model) SetVerified(verified bool) {
+	m.verified = verified
+}
+
 // Data loaders
 
 func (m *Model) loadChanges() tea.Cmd {
 	g := m.Git
 	path := m.Repo.Path
+	m.changesRequest++
+	request, session := m.changesRequest, m.sessionID
 	return func() tea.Msg {
 		ctx := context.Background()
 		changes, _ := g.GetChanges(ctx, path)
-		return changesLoadedMsg{changes: changes}
+		return changesLoadedMsg{changes: changes, session: session, path: path, request: request}
 	}
 }
 
@@ -244,6 +294,8 @@ func (m *Model) loadDiff(change git.ChangeInfo) tea.Cmd {
 	repoPath := m.Repo.Path
 	filePath := change.Path
 	isSubmodule := change.IsSubmodule
+	m.diffRequest++
+	request, session := m.diffRequest, m.sessionID
 	return func() tea.Msg {
 		var diff string
 		if isSubmodule {
@@ -261,43 +313,55 @@ func (m *Model) loadDiff(change git.ChangeInfo) tea.Cmd {
 				diff = string(out)
 			}
 		}
-		return diffLoadedMsg{path: filePath, diff: diff}
+		return diffLoadedMsg{path: filePath, diff: diff, session: session, request: request}
 	}
 }
 
 func (m *Model) loadRemote() tea.Cmd {
 	g := m.Git
 	path := m.Repo.Path
+	m.remoteRequest++
+	request, session := m.remoteRequest, m.sessionID
 	return func() tea.Msg {
 		ctx := context.Background()
 		remote, _ := g.GetRemote(ctx, path)
-		return remoteLoadedMsg{remote: remote}
+		return remoteLoadedMsg{remote: remote, session: session, path: path, request: request}
 	}
 }
 
 func (m *Model) loadCommits() tea.Cmd {
 	g := m.Git
 	path := m.Repo.Path
+	m.commitsRequest++
+	request, session := m.commitsRequest, m.sessionID
 	return func() tea.Msg {
 		ctx := context.Background()
 		commits, _ := g.GetLog(ctx, path, 50)
-		return commitsLoadedMsg{commits: commits}
+		return commitsLoadedMsg{commits: commits, session: session, path: path, request: request}
 	}
 }
 
 func (m *Model) loadStashDiff(index int) tea.Cmd {
 	repoPath := m.Repo.Path
+	if index < 0 || index >= len(m.stashEntries) {
+		return nil
+	}
+	entry := m.stashEntries[index]
+	m.stashDiffRequest++
+	request, session := m.stashDiffRequest, m.sessionID
 	return func() tea.Msg {
 		ref := fmt.Sprintf("stash@{%d}", index)
 		cmd := exec.Command("git", "-C", repoPath, "stash", "show", "-p", ref)
 		out, _ := cmd.Output()
-		return stashDiffLoadedMsg{diff: string(out)}
+		return stashDiffLoadedMsg{diff: string(out), entry: entry, session: session, path: repoPath, request: request}
 	}
 }
 
 func (m *Model) loadBranches() tea.Cmd {
 	repoPath := m.Repo.Path
 	defaultBranch := m.Repo.DefaultBranch
+	m.branchesRequest++
+	request, session := m.branchesRequest, m.sessionID
 	return func() tea.Msg {
 		cmd := exec.Command("git", "-C", repoPath, "for-each-ref",
 			"--sort=-committerdate",
@@ -346,26 +410,30 @@ func (m *Model) loadBranches() tea.Cmd {
 			}
 			branches = append(branches, bi)
 		}
-		return branchesLoadedMsg{branches: branches}
+		return branchesLoadedMsg{branches: branches, session: session, path: repoPath, request: request}
 	}
 }
 
 func (m *Model) loadStagedDiff() tea.Cmd {
 	repoPath := m.Repo.Path
+	m.stagedDiffRequest++
+	request, session := m.stagedDiffRequest, m.sessionID
 	return func() tea.Msg {
 		cmd := exec.Command("git", "-C", repoPath, "diff", "--cached")
 		out, _ := cmd.Output()
-		return stagedDiffLoadedMsg{diff: string(out)}
+		return stagedDiffLoadedMsg{diff: string(out), session: session, path: repoPath, request: request}
 	}
 }
 
 func (m *Model) refreshStash() tea.Cmd {
 	g := m.Git
 	path := m.Repo.Path
+	m.stashRequest++
+	request, session := m.stashRequest, m.sessionID
 	return func() tea.Msg {
 		ctx := context.Background()
 		out, _ := g.RunCommand(ctx, path, "stash", "list")
-		return stashInfoMsg{info: out}
+		return stashInfoMsg{info: out, session: session, path: path, request: request}
 	}
 }
 
@@ -374,12 +442,14 @@ func (m *Model) refreshRepo() tea.Cmd {
 	path := m.Repo.Path
 	verified := m.verifyAfterRefresh
 	remoteError := m.remoteErrorAfterRefresh
+	m.repoRequest++
+	request, session := m.repoRequest, m.sessionID
 	m.verifyAfterRefresh = false
 	m.remoteErrorAfterRefresh = false
 	return func() tea.Msg {
 		ctx := context.Background()
 		updated, _ := g.GetRepoInfo(ctx, path)
-		return repoRefreshedMsg{repo: updated, verified: verified, remoteError: remoteError}
+		return repoRefreshedMsg{repo: updated, verified: verified, remoteError: remoteError, verificationKnown: verified || remoteError, session: session, path: path, request: request}
 	}
 }
 
@@ -395,6 +465,13 @@ func (m *Model) selectedChange() (git.ChangeInfo, bool) {
 		return git.ChangeInfo{}, false
 	}
 	return m.changes[m.fileCursor], true
+}
+
+func (m *Model) execFinished(action string) func(error) tea.Msg {
+	session := m.sessionID
+	return func(err error) tea.Msg {
+		return execFinishedMsg{action: action, err: err, session: session}
+	}
 }
 
 // renderCommits formats commit log for the History tab viewport.

@@ -28,11 +28,18 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case remoteOperationReadyMsg:
+		if msg.session != m.sessionID {
+			msg.release()
+			return true, nil
+		}
 		return true, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
 			msg.release()
-			return execFinishedMsg{action: msg.action, err: err}
+			return execFinishedMsg{action: msg.action, err: err, session: msg.session}
 		})
 	case execFinishedMsg:
+		if msg.session != m.sessionID {
+			return true, nil
+		}
 		m.lastAction = msg.action
 		m.lastErr = msg.err
 		if msg.err != nil {
@@ -46,57 +53,99 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 				m.verifyAfterRefresh = true
 			}
 		}
+		reloadCommits := m.commitsLoaded
+		reloadBranches := m.branchesLoaded
+		m.commitsLoaded = false
+		m.branchesLoaded = false
+		m.stashDiffLoaded = false
+		m.diffLoaded = false
+		m.diffView.SetContent("")
+		m.stashDiffView.SetContent("")
 		cmds := []tea.Cmd{m.refreshRepo(), m.refreshStash(), m.loadChanges()}
-		if m.branchesLoaded {
+		if reloadCommits && m.activeTab == TabHistory {
+			cmds = append(cmds, m.loadCommits())
+		}
+		if reloadBranches && m.activeTab == TabBranches {
 			cmds = append(cmds, m.loadBranches())
 		}
 		return true, tea.Batch(cmds...)
 	case stashInfoMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stashRequest) {
+			return true, nil
+		}
 		m.stashInfo = msg.info
 		m.stashEntries = parseStashEntries(msg.info)
 		if m.stashCursor >= len(m.stashEntries) {
 			m.stashCursor = max(0, len(m.stashEntries)-1)
 		}
+		m.stashDiffLoaded = false
+		m.stashDiffView.SetContent("")
+		if m.activeTab == TabStash && len(m.stashEntries) > 0 {
+			return true, m.loadStashDiff(m.stashCursor)
+		}
 		return true, nil
 	case repoRefreshedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.repoRequest) {
+			return true, nil
+		}
 		m.Repo = msg.repo
-		if msg.verified {
-			m.verified = true
+		if msg.verificationKnown {
+			m.verified = msg.verified
 		}
 		return true, func() tea.Msg {
-			return common.RepoUpdatedMsg{Repo: msg.repo, Verified: msg.verified, RemoteError: msg.remoteError}
+			return common.RepoUpdatedMsg{Repo: msg.repo, Verified: msg.verified, RemoteError: msg.remoteError, Source: common.RepoUpdateUserAction}
 		}
 	case changesLoadedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.changesRequest) {
+			return true, nil
+		}
 		m.changes = msg.changes
 		if m.fileCursor >= len(m.changes) {
 			m.fileCursor = max(0, len(m.changes)-1)
 		}
 		if c, ok := m.selectedChange(); ok {
+			m.diffLoaded = false
+			m.diffView.SetContent("")
 			return true, m.loadDiff(c)
 		}
 		m.diffLoaded = false
 		m.diffView.SetContent("")
 		return true, nil
 	case diffLoadedMsg:
+		if !m.matchesRequest(msg.session, m.Repo.Path, msg.request, m.diffRequest) || msg.path != m.selectedFilePath() {
+			return true, nil
+		}
 		m.diffLoaded = true
 		m.diffView.SetContent(colorizeDiff(msg.diff))
 		m.diffView.GotoTop()
 		return true, nil
 	case commitsLoadedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.commitsRequest) {
+			return true, nil
+		}
 		m.commits = msg.commits
 		m.commitsLoaded = true
 		m.commitsView.SetContent(renderCommits(msg.commits))
 		m.commitsView.GotoTop()
 		return true, nil
 	case remoteLoadedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.remoteRequest) {
+			return true, nil
+		}
 		m.remote = msg.remote
 		return true, nil
 	case stashDiffLoadedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stashDiffRequest) || msg.entry != m.selectedStashEntry() {
+			return true, nil
+		}
 		m.stashDiffLoaded = true
 		m.stashDiffView.SetContent(colorizeDiff(msg.diff))
 		m.stashDiffView.GotoTop()
 		return true, nil
 	case branchesLoadedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.branchesRequest) {
+			return true, nil
+		}
 		m.branches = msg.branches
 		m.branchesLoaded = true
 		if m.branchCursor >= len(m.branches) {
@@ -104,11 +153,18 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case stagedDiffLoadedMsg:
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stagedDiffRequest) {
+			return true, nil
+		}
 		m.commitDiffView.SetContent(colorizeDiff(msg.diff))
 		m.commitDiffView.GotoTop()
 		return true, nil
 	}
 	return false, nil
+}
+
+func (m *Model) matchesRequest(session uint64, path string, request, current uint64) bool {
+	return session == m.sessionID && path == m.Repo.Path && request == current
 }
 
 func (m *Model) updateNormal(msg tea.Msg) tea.Cmd {
@@ -201,18 +257,14 @@ func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 		// Restore selected: git checkout -- <path> (tracked, non-submodule files only)
 		if c, ok := m.selectedChange(); ok && c.Staged != '?' && !c.IsSubmodule {
 			cmd := gitCmd(m.Repo.Path, "checkout", "--", c.Path)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "restore " + c.Path, err: err}
-			})
+			return tea.ExecProcess(cmd, m.execFinished("restore "+c.Path))
 		}
 		return nil
 	case "X":
-		// Delete selected: rm <path> (untracked, non-submodule files only)
-		if c, ok := m.selectedChange(); ok && c.Staged == '?' && !c.IsSubmodule {
-			cmd := gitCmd(m.Repo.Path, "clean", "-f", "--", c.Path)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "delete " + c.Path, err: err}
-			})
+		// Delete selected untracked path, including an untracked directory.
+		if c, ok := m.selectedChange(); ok && (c.Staged == '?' || c.Unstaged == '?') && !c.IsSubmodule {
+			cmd := gitCmd(m.Repo.Path, "clean", "-d", "-f", "--", c.Path)
+			return tea.ExecProcess(cmd, m.execFinished("delete "+c.Path))
 		}
 		return nil
 	}
@@ -287,17 +339,13 @@ func (m *Model) updateStash(msg tea.KeyMsg) tea.Cmd {
 		if len(m.stashEntries) > 0 {
 			ref := fmt.Sprintf("stash@{%d}", m.stashCursor)
 			cmd := gitCmd(m.Repo.Path, "stash", "pop", ref)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "stash pop " + ref, err: err}
-			})
+			return tea.ExecProcess(cmd, m.execFinished("stash pop "+ref))
 		}
 	case "d":
 		if len(m.stashEntries) > 0 {
 			ref := fmt.Sprintf("stash@{%d}", m.stashCursor)
 			cmd := gitCmd(m.Repo.Path, "stash", "drop", ref)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "stash drop " + ref, err: err}
-			})
+			return tea.ExecProcess(cmd, m.execFinished("stash drop "+ref))
 		}
 	}
 	return nil
@@ -332,9 +380,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 				action = "rename " + old + " → " + name
 			}
 			if cmd != nil {
-				return tea.ExecProcess(cmd, func(err error) tea.Msg {
-					return execFinishedMsg{action: action, err: err}
-				})
+				return tea.ExecProcess(cmd, m.execFinished(action))
 			}
 			return nil
 		}
@@ -355,9 +401,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
 			name := m.branches[m.branchCursor].Name
 			cmd := gitRefCmd(m.Repo.Path, []string{"switch"}, name)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "switch " + name, err: err}
-			})
+			return tea.ExecProcess(cmd, m.execFinished("switch "+name))
 		}
 	case "n":
 		// Create new branch
@@ -382,18 +426,14 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
 			name := m.branches[m.branchCursor].Name
 			cmd := gitRefCmd(m.Repo.Path, []string{"branch", "-d"}, name)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "delete " + name, err: err}
-			})
+			return tea.ExecProcess(cmd, m.execFinished("delete "+name))
 		}
 	case "D":
 		// Force delete branch
 		if len(m.branches) > 0 && !m.branches[m.branchCursor].IsCurrent {
 			name := m.branches[m.branchCursor].Name
 			cmd := gitRefCmd(m.Repo.Path, []string{"branch", "-D"}, name)
-			return tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{action: "force delete " + name, err: err}
-			})
+			return tea.ExecProcess(cmd, m.execFinished("force delete "+name))
 		}
 	}
 	return nil
@@ -426,6 +466,8 @@ func (m *Model) moveFileCursor(delta int) tea.Cmd {
 	}
 	if m.fileCursor != prev {
 		if c, ok := m.selectedChange(); ok {
+			m.diffLoaded = false
+			m.diffView.SetContent("")
 			return m.loadDiff(c)
 		}
 	}
@@ -445,9 +487,18 @@ func (m *Model) moveStashCursor(delta int) tea.Cmd {
 		m.stashCursor = len(m.stashEntries) - 1
 	}
 	if m.stashCursor != prev {
+		m.stashDiffLoaded = false
+		m.stashDiffView.SetContent("")
 		return m.loadStashDiff(m.stashCursor)
 	}
 	return nil
+}
+
+func (m *Model) selectedStashEntry() string {
+	if m.stashCursor < 0 || m.stashCursor >= len(m.stashEntries) {
+		return ""
+	}
+	return m.stashEntries[m.stashCursor]
 }
 
 func (m *Model) updateCommit(msg tea.Msg) tea.Cmd {
@@ -472,9 +523,7 @@ func (m *Model) updateCommit(msg tea.Msg) tea.Cmd {
 		m.mode = modeNormal
 		m.commitInput.Blur()
 		cmd := gitCmd(m.Repo.Path, "commit", "-m", message)
-		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return execFinishedMsg{action: "commit", err: err}
-		})
+		return tea.ExecProcess(cmd, m.execFinished("commit"))
 	case "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.commitDiffView, cmd = m.commitDiffView.Update(kmsg)
@@ -546,14 +595,12 @@ func (m *Model) executeAction(action Action, input string) tea.Cmd {
 		return func() tea.Msg {
 			_, ran, release, err := coordinator.Acquire(context.Background(), key, true)
 			if err != nil || !ran {
-				return execFinishedMsg{action: actionName, err: err}
+				return execFinishedMsg{action: actionName, err: err, session: m.sessionID}
 			}
-			return remoteOperationReadyMsg{action: actionName, cmd: cmd, release: release}
+			return remoteOperationReadyMsg{action: actionName, cmd: cmd, release: release, session: m.sessionID}
 		}
 	}
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return execFinishedMsg{action: actionName, err: err}
-	})
+	return tea.ExecProcess(cmd, m.execFinished(actionName))
 }
 
 // parseStashEntries splits stash list output into individual entries.

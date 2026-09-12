@@ -2,23 +2,34 @@ package common
 
 import "github.com/yachiko/fossor/internal/git"
 
+// RepoUpdateSource identifies the operation that produced repository metadata.
+type RepoUpdateSource int
+
+const (
+	RepoUpdateRefresh RepoUpdateSource = iota
+	RepoUpdateDiscovery
+	RepoUpdateUserAction
+)
+
 // RepoDiscoveredMsg is sent when a repo is discovered during scanning.
 // It carries the channel so the listener can re-subscribe.
 type RepoDiscoveredMsg struct {
-	Repo     git.RepoInfo
-	FetchErr error
-	Path     string
-	Skipped  bool
-	Revision uint64
-	Local    bool
-	Ch       <-chan git.DiscoveryResult
+	Repo                git.RepoInfo
+	FetchErr            error
+	Path                string
+	Skipped             bool
+	Revision            uint64
+	DiscoveryGeneration uint64
+	Local               bool
+	Ch                  <-chan git.DiscoveryResult
 }
 
 // DiscoveryCompleteMsg is sent when repo discovery finishes.
 type DiscoveryCompleteMsg struct {
-	Complete  bool
-	LocalDone bool
-	Ch        <-chan git.DiscoveryResult
+	Complete            bool
+	LocalDone           bool
+	DiscoveryGeneration uint64
+	Ch                  <-chan git.DiscoveryResult
 }
 
 // RepoUpdatedMsg is sent after a repo operation completes (pull, fetch, etc).
@@ -27,6 +38,7 @@ type RepoUpdatedMsg struct {
 	Verified    bool
 	RemoteError bool
 	Revision    uint64
+	Source      RepoUpdateSource
 }
 
 // OperationResultMsg carries the result of a git operation for display.
