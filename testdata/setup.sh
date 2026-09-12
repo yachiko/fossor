@@ -60,7 +60,7 @@ commit_to_bare() {
     rm -rf "$tmp"
 }
 
-echo "Creating 21 repository families..."
+echo "Creating test repository families..."
 
 # --- 1. clean ---
 echo "  1/20 clean"
@@ -283,7 +283,7 @@ GIT_AUTHOR_DATE="2025-01-15T18:00:00+00:00" GIT_COMMITTER_DATE="2025-01-15T18:00
 echo "local submodule edit" >> "$REPOS/with-submodule-dirty/libs/shared/README.md"
 
 # --- 21. worktree family ---
-echo "  21/21 worktree family"
+echo "  21/22 worktree family"
 worktree_primary="$REPOS/worktree-primary"
 worktree_feature="$REPOS/worktree-feature"
 init_repo "$worktree_primary"
@@ -292,6 +292,42 @@ git -C "$worktree_primary" fetch -q
 git -C "$worktree_primary" worktree add -q -b feature/worktree "$worktree_feature"
 echo "worktree change" > "$worktree_feature/WIP.md"
 
+# --- 22. all change states ---
+echo "  22/22 all-changes"
+all_changes="$REPOS/all-changes"
+init_repo "$all_changes"
+cat > "$all_changes/.gitignore" <<'EOF'
+ignored.log
+EOF
+for file in staged-modified mixed-modified unstaged-modified unstaged-deleted staged-deleted renamed mode-change; do
+    echo "original $file" > "$all_changes/$file.txt"
+done
+git -C "$all_changes" add .
+GIT_AUTHOR_DATE="2025-01-15T19:00:00+00:00" GIT_COMMITTER_DATE="2025-01-15T19:00:00+00:00" \
+    git -C "$all_changes" commit -q -m "Add change-state fixtures"
+setup_remote "$all_changes"
+git -C "$all_changes" fetch -q
+
+# Unstaged modification, staged modification, and a file modified in both index and worktree.
+echo "unstaged edit" >> "$all_changes/unstaged-modified.txt"
+echo "staged edit" >> "$all_changes/staged-modified.txt"
+git -C "$all_changes" add staged-modified.txt
+echo "staged edit" >> "$all_changes/mixed-modified.txt"
+git -C "$all_changes" add mixed-modified.txt
+echo "unstaged follow-up" >> "$all_changes/mixed-modified.txt"
+
+# Unstaged/staged deletion, staged addition and rename, untracked file/directory, ignored file, and mode change.
+rm "$all_changes/unstaged-deleted.txt"
+git -C "$all_changes" rm -q staged-deleted.txt
+echo "staged addition" > "$all_changes/staged-added.txt"
+git -C "$all_changes" add staged-added.txt
+git -C "$all_changes" mv renamed.txt renamed-to.txt
+echo "untracked file" > "$all_changes/untracked.txt"
+mkdir -p "$all_changes/untracked-dir"
+echo "untracked directory file" > "$all_changes/untracked-dir/nested.txt"
+echo "ignored" > "$all_changes/ignored.log"
+chmod +x "$all_changes/mode-change.txt"
+
 echo ""
-echo "Done! Created 21 repository families (22 checkouts) in $REPOS"
+echo "Done! Created 22 repository families (23 checkouts) in $REPOS"
 echo "Run fossor with: fossor $REPOS"
