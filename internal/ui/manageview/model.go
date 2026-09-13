@@ -400,6 +400,13 @@ func (m *Model) refreshRepo() tea.Cmd {
 	}
 }
 
+func (m *Model) selectedFilePath() string {
+	if len(m.changes) == 0 || m.fileCursor >= len(m.changes) {
+		return ""
+	}
+	return m.changes[m.fileCursor].DestinationPath
+}
+
 func (m *Model) selectedChange() (git.ChangeInfo, bool) {
 	if len(m.changes) == 0 || m.fileCursor >= len(m.changes) {
 		return git.ChangeInfo{}, false

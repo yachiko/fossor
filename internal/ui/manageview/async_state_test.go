@@ -28,6 +28,42 @@ func TestDiffResultMustMatchCurrentSelectionAndRequest(t *testing.T) {
 	}
 }
 
+func TestStashResultMustMatchCurrentEntryAndRequest(t *testing.T) {
+	m := NewWithCoordinator(nil, git.RepoInfo{Path: "/repo"}, true, nil, 9)
+	m.stashEntries = []git.StashInfo{{Ref: "stash@{0}", Message: "first"}, {Ref: "stash@{1}", Message: "second"}}
+	m.stashDiffLoaded = true
+	m.stashDiffView.SetContent("first preview")
+
+	m.moveStashCursor(1)
+	if m.stashDiffLoaded {
+		t.Fatal("changing stashes must clear the previous preview while the new one loads")
+	}
+
+	m.HandleInternalMsg(stashDiffLoadedMsg{entry: "stash@{0}", diff: "first result", session: 9, path: "/repo", request: 0})
+	if m.stashDiffLoaded {
+		t.Fatal("stale stash result replaced the loading preview")
+	}
+
+	m.HandleInternalMsg(stashDiffLoadedMsg{entry: "stash@{1}", diff: "+second result", session: 9, path: "/repo", request: 1})
+	if !m.stashDiffLoaded || !strings.Contains(m.stashDiffView.View(), "second result") {
+		t.Fatal("current stash result was not displayed")
+	}
+}
+
+func TestClosedSessionResultsAreIgnored(t *testing.T) {
+	m := NewWithCoordinator(nil, git.RepoInfo{Path: "/repo"}, true, nil, 2)
+	m.changesRequest = 1
+	m.HandleInternalMsg(changesLoadedMsg{
+		changes: []git.ChangeInfo{{DestinationPath: "stale.go"}},
+		session: 1,
+		path:    "/repo",
+		request: 1,
+	})
+	if len(m.changes) != 0 {
+		t.Fatal("result from a closed session populated the new model")
+	}
+}
+
 func TestDeleteAllowsUntrackedStatusInEitherColumn(t *testing.T) {
 	m := New(nil, git.RepoInfo{Path: "/repo"}, true)
 	m.changes = []git.ChangeInfo{{Unstaged: '?', DestinationPath: "untracked"}}

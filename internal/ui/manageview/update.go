@@ -119,8 +119,7 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.diffView.SetContent("")
 		return true, nil
 	case diffLoadedMsg:
-		change, ok := m.selectedChange()
-		if !m.matchesRequest(msg.session, m.Repo.Path, msg.request, m.diffRequest) || !ok || msg.path != change.DestinationPath {
+		if !m.matchesRequest(msg.session, m.Repo.Path, msg.request, m.diffRequest) || msg.path != m.selectedFilePath() {
 			return true, nil
 		}
 		m.diffErr = msg.err
