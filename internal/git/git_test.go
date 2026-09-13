@@ -116,6 +116,40 @@ func TestGetChanges(t *testing.T) {
 	}
 }
 
+func TestGetChangesUsesRenameDestinationPath(t *testing.T) {
+	dir := setupTestRepo(t)
+	g := NewExecGit()
+	ctx := context.Background()
+
+	if err := os.WriteFile(filepath.Join(dir, "renamed.txt"), []byte("contents\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "add", "renamed.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "commit", "-m", "add rename fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "mv", "renamed.txt", "renamed-to.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := g.GetChanges(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Staged != 'R' || changes[0].Path != "renamed-to.txt" {
+		t.Fatalf("GetChanges() = %#v, want staged rename to renamed-to.txt", changes)
+	}
+	diff, err := g.GetFileDiff(ctx, dir, changes[0].Path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+contents") {
+		t.Errorf("GetFileDiff() = %q, want destination contents", diff)
+	}
+}
+
 func TestReadOnlyManageQueries(t *testing.T) {
 	dir := setupTestRepo(t)
 	g := NewExecGit()
