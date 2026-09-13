@@ -100,7 +100,7 @@ func (m *Model) View() string {
 
 	// Title with status counts
 	dirStyle := lipgloss.NewStyle().Foreground(common.ColorMuted)
-	left := common.TitleStyle.Render("fossor") + "  " + dirStyle.Render(m.RootDir)
+	left := common.TitleStyle.Render("fossor") + "  " + dirStyle.Render(git.Sanitize(m.RootDir))
 	right := m.statusCountsView()
 	if right != "" {
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -187,7 +187,7 @@ func (m *Model) View() string {
 		tableRow := rows[vi]
 		if tableRow.repoIndex < 0 {
 			marker := m.worktreeMarker(tableRow)
-			row := fmt.Sprintf("  %-*s %s worktrees (%d)", colWorktree, marker, tableRow.groupName, tableRow.groupSize)
+			row := fmt.Sprintf("  %-*s %s worktrees (%d)", colWorktree, marker, git.Sanitize(tableRow.groupName), tableRow.groupSize)
 			style := lipgloss.NewStyle().Bold(true).Foreground(common.ColorAccent)
 			if vi == m.cursor {
 				style = selectedStyle.Bold(true)
@@ -223,7 +223,7 @@ func (m *Model) View() string {
 			statusStr = "..."
 		}
 
-		name := repo.Name
+		name := git.Sanitize(repo.Name)
 		if tableRow.groupKey != "" && !tableRow.groupRoot {
 			name = "  " + name
 		}
@@ -236,7 +236,7 @@ func (m *Model) View() string {
 			row = fmt.Sprintf("  %-*s %-*s %-*s %*s %*s %*s %-*s",
 				colWorktree, marker,
 				colName, truncate(name, colName),
-				colBranch, truncate(repo.Branch, colBranch),
+				colBranch, truncate(git.Sanitize(repo.Branch), colBranch),
 				colAhead, aheadStr,
 				colBehind, behindStr,
 				colChanges, changesStr,
@@ -245,7 +245,7 @@ func (m *Model) View() string {
 		} else {
 			row = fmt.Sprintf("  %-*s %-*s %*s %*s %*s %-*s",
 				colName, truncate(name, colName),
-				colBranch, truncate(repo.Branch, colBranch),
+				colBranch, truncate(git.Sanitize(repo.Branch), colBranch),
 				colAhead, aheadStr,
 				colBehind, behindStr,
 				colChanges, changesStr,
@@ -266,7 +266,7 @@ func (m *Model) View() string {
 				rowNoStatus = fmt.Sprintf("  %-*s %-*s %-*s %*s %*s %*s ",
 					colWorktree, marker,
 					colName, truncate(name, colName),
-					colBranch, truncate(repo.Branch, colBranch),
+					colBranch, truncate(git.Sanitize(repo.Branch), colBranch),
 					colAhead, aheadStr,
 					colBehind, behindStr,
 					colChanges, changesStr,
@@ -274,7 +274,7 @@ func (m *Model) View() string {
 			} else {
 				rowNoStatus = fmt.Sprintf("  %-*s %-*s %*s %*s %*s ",
 					colName, truncate(name, colName),
-					colBranch, truncate(repo.Branch, colBranch),
+					colBranch, truncate(git.Sanitize(repo.Branch), colBranch),
 					colAhead, aheadStr,
 					colBehind, behindStr,
 					colChanges, changesStr,
@@ -327,11 +327,11 @@ func (m *Model) worktreeMarker(row tableRow) string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if len([]rune(s)) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string([]rune(s)[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string([]rune(s)[:maxLen-3]) + "..."
 }

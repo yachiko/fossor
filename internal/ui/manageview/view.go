@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/yachiko/fossor/internal/git"
 	"github.com/yachiko/fossor/internal/ui/common"
 	"github.com/yachiko/fossor/internal/ui/components"
 )
@@ -19,7 +20,7 @@ func (m *Model) View() string {
 	var b strings.Builder
 
 	// Line 1: repo name
-	b.WriteString(" " + common.TitleStyle.Render(m.Repo.Name))
+	b.WriteString(" " + common.TitleStyle.Render(git.Sanitize(m.Repo.Name)))
 	b.WriteString("\n")
 
 	// Line 2: repo info
@@ -30,7 +31,7 @@ func (m *Model) View() string {
 		remote = "–"
 	}
 	fmt.Fprintf(&b, "  %s  %s → %s  remote:%s  ahead:%d  behind:%d  changes:%d  stash:%d\n",
-		statusStyled, m.Repo.Branch, m.Repo.DefaultBranch, remote,
+		statusStyled, git.Sanitize(m.Repo.Branch), git.Sanitize(m.Repo.DefaultBranch), git.Sanitize(remote),
 		m.Repo.Ahead, m.Repo.Behind, m.Repo.Changes, len(m.stashEntries),
 	)
 
@@ -73,9 +74,9 @@ func (m *Model) viewStatus() string {
 	// === Bottom section (rendered first to measure height) ===
 
 	if m.lastAction != "" {
-		actionLabel := lipgloss.NewStyle().Foreground(common.ColorAccent).Render(m.lastAction)
+		actionLabel := lipgloss.NewStyle().Foreground(common.ColorAccent).Render(git.Sanitize(m.lastAction))
 		if m.lastErr != nil {
-			fmt.Fprintf(&bottom, "  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorRed).Render(m.lastErr.Error()))
+			fmt.Fprintf(&bottom, "  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorRed).Render(git.Sanitize(m.lastErr.Error())))
 		} else {
 			fmt.Fprintf(&bottom, "  %s: %s\n", actionLabel, lipgloss.NewStyle().Foreground(common.ColorGreen).Render("done"))
 		}
@@ -145,7 +146,7 @@ func (m *Model) viewStatus() string {
 			if c.IsSubmodule {
 				nameWidth -= 6
 			}
-			name := truncate(c.Path, nameWidth)
+			name := truncate(git.Sanitize(c.DestinationPath), nameWidth)
 			if i == m.fileCursor {
 				sel := lipgloss.NewStyle().Background(common.ColorSurface).Foreground(common.ColorWhite)
 				fileList.WriteString(sel.Render(fmt.Sprintf("> %s %s", indicator, name)) + "\n")

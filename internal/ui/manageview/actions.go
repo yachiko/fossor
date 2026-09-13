@@ -27,15 +27,16 @@ func AllCategories() []Category {
 
 // Action defines a single keybinding-driven git operation.
 type Action struct {
-	Key          string                                          // keybinding
-	Name         string                                          // human label
-	Category     Category                                        // grouping
-	Dangerous    bool                                            // requires y/n confirmation
-	NeedsInput   bool                                            // prompts for text input first
-	InputPrompt  string                                          // prompt text when NeedsInput
-	UsesSelected bool                                            // passes selected file path as input
-	Enabled      func(git.RepoInfo) bool                         // enable condition
-	BuildCmd     func(repo git.RepoInfo, input string) *exec.Cmd // builds the command
+	Key              string                                          // keybinding
+	Name             string                                          // human label
+	Category         Category                                        // grouping
+	Dangerous        bool                                            // requires y/n confirmation
+	NeedsInput       bool                                            // prompts for text input first
+	InputPrompt      string                                          // prompt text when NeedsInput
+	UsesSelected     bool                                            // passes the selected change to BuildSelectedCmd
+	Enabled          func(git.RepoInfo) bool                         // enable condition
+	BuildCmd         func(repo git.RepoInfo, input string) *exec.Cmd // builds the command
+	BuildSelectedCmd func(repo git.RepoInfo, change git.ChangeInfo) *exec.Cmd
 }
 
 // gitCmd builds an exec.Cmd for a git command in the given repo path.
@@ -51,4 +52,28 @@ func gitRefCmd(path string, subArgs []string, ref string) *exec.Cmd {
 	all := append([]string{}, subArgs...)
 	all = append(all, "--", ref)
 	return git.Command(path, all...)
+}
+
+// gitPathCmd appends literal pathspecs. `--` only ends option parsing; without
+// `:(literal)`, Git still interprets glob and magic pathspec characters.
+func gitPathCmd(path string, subArgs []string, paths ...string) *exec.Cmd {
+	args := append([]string{}, subArgs...)
+	args = append(args, "--")
+	for _, path := range paths {
+		args = append(args, ":(literal)"+path)
+	}
+	return gitCmd(path, args...)
+}
+
+// restoreChangeCmds restores a rename's source from the index, then removes its
+// destination. Passing both endpoints to checkout fails because the destination
+// does not exist in the index for an unstaged rename.
+func restoreChangeCmds(repoPath string, change git.ChangeInfo) []*exec.Cmd {
+	if change.SourcePath == "" {
+		return []*exec.Cmd{gitPathCmd(repoPath, []string{"checkout"}, change.DestinationPath)}
+	}
+	return []*exec.Cmd{
+		gitPathCmd(repoPath, []string{"checkout"}, change.SourcePath),
+		gitPathCmd(repoPath, []string{"clean", "-f"}, change.DestinationPath),
+	}
 }

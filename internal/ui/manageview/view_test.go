@@ -121,7 +121,7 @@ func TestFileChangeIndicator(t *testing.T) {
 	}{
 		{
 			name:   "untracked file",
-			change: git.ChangeInfo{Staged: '?', Unstaged: '?', Path: "new.txt"},
+			change: git.ChangeInfo{Staged: '?', Unstaged: '?', DestinationPath: "new.txt"},
 			check: func(t *testing.T, result string) {
 				if !strings.Contains(result, "?") {
 					t.Errorf("expected '?' for untracked, got %q", result)
@@ -130,7 +130,7 @@ func TestFileChangeIndicator(t *testing.T) {
 		},
 		{
 			name:   "staged only",
-			change: git.ChangeInfo{Staged: 'M', Unstaged: ' ', Path: "file.go"},
+			change: git.ChangeInfo{Staged: 'M', Unstaged: ' ', DestinationPath: "file.go"},
 			check: func(t *testing.T, result string) {
 				if !strings.Contains(result, "M") {
 					t.Errorf("expected 'M' for staged, got %q", result)
@@ -139,7 +139,7 @@ func TestFileChangeIndicator(t *testing.T) {
 		},
 		{
 			name:   "unstaged only",
-			change: git.ChangeInfo{Staged: ' ', Unstaged: 'M', Path: "file.go"},
+			change: git.ChangeInfo{Staged: ' ', Unstaged: 'M', DestinationPath: "file.go"},
 			check: func(t *testing.T, result string) {
 				if !strings.Contains(result, "M") {
 					t.Errorf("expected 'M' for unstaged, got %q", result)
@@ -148,7 +148,7 @@ func TestFileChangeIndicator(t *testing.T) {
 		},
 		{
 			name:   "submodule",
-			change: git.ChangeInfo{Staged: 'M', Unstaged: ' ', Path: "sub", IsSubmodule: true},
+			change: git.ChangeInfo{Staged: 'M', Unstaged: ' ', DestinationPath: "sub", IsSubmodule: true},
 			check: func(t *testing.T, result string) {
 				if !strings.Contains(result, "[sub]") {
 					t.Errorf("expected '[sub]' for submodule, got %q", result)

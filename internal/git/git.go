@@ -100,26 +100,23 @@ func runGitRawOnce(ctx context.Context, path string, args ...string) (string, er
 	return stdout.String(), nil
 }
 
-// Sanitize strips C0 control characters and DEL (except tab) from a string
-// before it crosses into the UI. Repo-supplied data — commit subjects, author
-// names, branch refs, file paths — can contain ANSI escape sequences that
-// would otherwise reach the terminal directly and enable UI spoofing or
-// cursor hijack. Replaces stripped bytes with '?'.
-//
-// Operates on bytes, not runes, so it also catches stray C1 controls that
-// appear as invalid UTF-8 byte sequences (a single 0x9b byte, for instance).
+// Sanitize makes untrusted text safe for terminal display. It preserves valid
+// UTF-8, replaces malformed byte sequences with U+FFFD, and neutralizes C0,
+// C1, and DEL controls (tabs remain allowed for existing layout behavior).
+// It is deliberately a rendering-boundary function: Git acquisition retains
+// raw values for subsequent Git commands.
 func Sanitize(s string) string {
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	var b strings.Builder
 	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	for _, c := range s {
 		switch {
 		case c == '\t':
-			b.WriteByte(c)
+			b.WriteRune(c)
 		case c < 0x20, c == 0x7f, c >= 0x80 && c < 0xa0:
 			b.WriteByte('?')
 		default:
-			b.WriteByte(c)
+			b.WriteRune(c)
 		}
 	}
 	return b.String()
@@ -249,7 +246,7 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 			ref := strings.TrimSpace(string(data))
 			const prefix = "ref: refs/remotes/origin/"
 			if strings.HasPrefix(ref, prefix) {
-				return Sanitize(ref[len(prefix):])
+				return ref[len(prefix):]
 			}
 		}
 	}
@@ -257,9 +254,9 @@ func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
 	// Fallback: git symbolic-ref (handles packed refs)
 	out, err := g.run(ctx, path, "symbolic-ref", "refs/remotes/origin/HEAD")
 	if err == nil {
-		parts := strings.Split(out, "/")
-		if len(parts) > 0 {
-			return Sanitize(parts[len(parts)-1])
+		const prefix = "refs/remotes/origin/"
+		if strings.HasPrefix(out, prefix) {
+			return out[len(prefix):]
 		}
 	}
 
@@ -285,7 +282,7 @@ func (g *ExecGit) GetRemoteDefaultBranch(ctx context.Context, path string) (stri
 		if len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD" {
 			const prefix = "refs/heads/"
 			if strings.HasPrefix(fields[1], prefix) {
-				return Sanitize(fields[1][len(prefix):]), nil
+				return fields[1][len(prefix):], nil
 			}
 		}
 	}
@@ -297,7 +294,7 @@ func (g *ExecGit) GetBranch(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return Sanitize(out), nil
+	return out, nil
 }
 
 func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
@@ -305,7 +302,7 @@ func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return Sanitize(out), nil
+	return out, nil
 }
 
 func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int, int, error) {
@@ -347,28 +344,37 @@ func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, er
 		return nil, err
 	}
 
-	// Detect submodule paths from .gitmodules
 	submodulePaths := g.getSubmodulePaths(ctx, path)
-
-	entries := strings.Split(out, "\x00")
-	changes := make([]ChangeInfo, 0, len(entries))
-	for i := 0; i < len(entries); i++ {
-		entry := entries[i]
-		if len(entry) < 3 {
+	data := []byte(out)
+	var changes []ChangeInfo
+	for len(data) > 0 {
+		i := bytes.IndexByte(data, 0)
+		if i < 0 {
+			return nil, fmt.Errorf("malformed porcelain status: missing NUL terminator")
+		}
+		record := data[:i]
+		data = data[i+1:]
+		if len(record) < 3 {
 			continue
 		}
-		p := entry[3:]
-		changes = append(changes, ChangeInfo{
-			Staged:      entry[0],
-			Unstaged:    entry[1],
-			Path:        Sanitize(p),
-			IsSubmodule: submodulePaths[p],
-		})
-		if entry[0] == 'R' || entry[0] == 'C' {
-			// A rename/copy is followed by its source path, which is not a
-			// separate change entry.
-			i++
+
+		destination := string(record[3:])
+		var source string
+		if record[0] == 'R' || record[0] == 'C' || record[1] == 'R' || record[1] == 'C' {
+			i := bytes.IndexByte(data, 0)
+			if i < 0 {
+				return nil, fmt.Errorf("malformed porcelain status: missing rename source")
+			}
+			source = string(data[:i])
+			data = data[i+1:]
 		}
+		changes = append(changes, ChangeInfo{
+			Staged:          record[0],
+			Unstaged:        record[1],
+			SourcePath:      source,
+			DestinationPath: destination,
+			IsSubmodule:     submodulePaths[destination],
+		})
 	}
 	return changes, nil
 }
@@ -556,7 +562,7 @@ func (g *ExecGit) getStatusInfo(ctx context.Context, path string) (struct {
 		}
 		switch {
 		case strings.HasPrefix(line, "# branch.head "):
-			r.branch = Sanitize(line[len("# branch.head "):])
+			r.branch = line[len("# branch.head "):]
 		case strings.HasPrefix(line, "# branch.ab "):
 			// Format: # branch.ab +N -M
 			parts := strings.Fields(line)
@@ -589,9 +595,9 @@ func (g *ExecGit) GetLog(ctx context.Context, path string, n int) ([]CommitInfo,
 		commits = append(commits, CommitInfo{
 			Hash:    lines[i],
 			Short:   lines[i+1],
-			Author:  Sanitize(lines[i+2]),
+			Author:  lines[i+2],
 			Date:    date,
-			Subject: Sanitize(lines[i+4]),
+			Subject: lines[i+4],
 		})
 	}
 	return commits, nil
