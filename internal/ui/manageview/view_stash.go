@@ -23,7 +23,9 @@ func (m *Model) viewStash() string {
 	var entryList strings.Builder
 	entryList.WriteString(catHeaderStyle.Render(fmt.Sprintf("Stash (%d)", len(m.stashEntries))) + "\n")
 
-	if len(m.stashEntries) == 0 {
+	if m.stashErr != nil {
+		entryList.WriteString(errorStyle.Render("  "+m.stashErr.Error()) + "\n")
+	} else if len(m.stashEntries) == 0 {
 		entryList.WriteString(disabledStyle.Render("  (empty)") + "\n")
 	} else {
 		visible := height - 1
@@ -41,7 +43,7 @@ func (m *Model) viewStash() string {
 			end = len(m.stashEntries)
 		}
 		for i := m.stashScroll; i < end; i++ {
-			label := truncate(m.stashEntries[i], listWidth-4)
+			label := truncate(m.stashEntries[i].Ref+": "+m.stashEntries[i].Message, listWidth-4)
 			if i == m.stashCursor {
 				sel := lipgloss.NewStyle().Background(common.ColorSurface).Foreground(common.ColorWhite)
 				entryList.WriteString(sel.Render("> "+label) + "\n")
@@ -60,8 +62,12 @@ func (m *Model) viewStash() string {
 		m.stashDiffView.Height = 1
 	}
 
-	if len(m.stashEntries) == 0 {
+	if m.stashErr != nil {
+		diffPanel.WriteString(disabledStyle.Render("  refresh with ctrl+r") + "\n")
+	} else if len(m.stashEntries) == 0 {
 		diffPanel.WriteString(disabledStyle.Render("  (no stash)") + "\n")
+	} else if m.stashDiffErr != nil {
+		diffPanel.WriteString(errorStyle.Render("  "+m.stashDiffErr.Error()) + "\n")
 	} else if !m.stashDiffLoaded {
 		diffPanel.WriteString(disabledStyle.Render("  loading...") + "\n")
 	} else {

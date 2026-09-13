@@ -8,7 +8,9 @@ func (m *Model) viewHistory() string {
 	m.commitsView.Height = height
 
 	var content string
-	if !m.commitsLoaded {
+	if m.commitsErr != nil {
+		content = errorStyle.Render("  " + m.commitsErr.Error() + " (ctrl+r to retry)\n")
+	} else if !m.commitsLoaded {
 		content = "  Loading commits...\n"
 	} else {
 		content = m.commitsView.View() + "\n"

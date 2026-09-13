@@ -54,11 +54,14 @@ func (c *OperationCoordinator) Acquire(ctx context.Context, key string, high boo
 			s.done = make(chan struct{})
 			revision = s.revision
 			c.mu.Unlock()
+			var once sync.Once
 			return revision, true, func() {
-				c.mu.Lock()
-				s.running = false
-				close(s.done)
-				c.mu.Unlock()
+				once.Do(func() {
+					c.mu.Lock()
+					s.running = false
+					close(s.done)
+					c.mu.Unlock()
+				})
 			}, nil
 		}
 		wait := s.done

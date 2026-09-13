@@ -74,3 +74,18 @@ func TestOperationCoordinatorPrioritizesUserAndSerializesPath(t *testing.T) {
 		t.Fatalf("order = %v", order)
 	}
 }
+
+func TestOperationCoordinatorReleaseIsIdempotent(t *testing.T) {
+	c := NewOperationCoordinator()
+	_, ran, release, err := c.Acquire(context.Background(), "/repo", true)
+	if err != nil || !ran {
+		t.Fatalf("Acquire() ran=%v err=%v", ran, err)
+	}
+	release()
+	release()
+	if _, ran, nextRelease, err := c.Acquire(context.Background(), "/repo", true); err != nil || !ran {
+		t.Fatalf("second Acquire() ran=%v err=%v", ran, err)
+	} else {
+		nextRelease()
+	}
+}

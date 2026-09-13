@@ -119,7 +119,9 @@ func (m *Model) viewStatus() string {
 	var fileList strings.Builder
 	fileList.WriteString(catHeaderStyle.Render(fmt.Sprintf("Changes (%d)", len(m.changes))) + "\n")
 
-	if len(m.changes) == 0 {
+	if m.changesErr != nil {
+		fileList.WriteString(errorStyle.Render("  "+m.changesErr.Error()) + "\n")
+	} else if len(m.changes) == 0 {
 		fileList.WriteString(disabledStyle.Render("  (clean)") + "\n")
 	} else {
 		visibleFiles := panelHeight - 1
@@ -161,8 +163,12 @@ func (m *Model) viewStatus() string {
 	if m.diffView.Height < 1 {
 		m.diffView.Height = 1
 	}
-	if len(m.changes) == 0 {
+	if m.changesErr != nil {
+		diffPanel.WriteString(disabledStyle.Render("  refresh with ctrl+r") + "\n")
+	} else if len(m.changes) == 0 {
 		diffPanel.WriteString(disabledStyle.Render("  (no files)") + "\n")
+	} else if m.diffErr != nil {
+		diffPanel.WriteString(errorStyle.Render("  "+m.diffErr.Error()) + "\n")
 	} else if !m.diffLoaded {
 		diffPanel.WriteString(disabledStyle.Render("  loading...") + "\n")
 	} else {

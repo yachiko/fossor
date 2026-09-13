@@ -1,13 +1,12 @@
 package manageview
 
 import (
-	"context"
-	"fmt"
 	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/yachiko/fossor/internal/git"
 	"github.com/yachiko/fossor/internal/ui/common"
 )
 
@@ -53,15 +52,12 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 				m.verifyAfterRefresh = true
 			}
 		}
-		reloadCommits := m.commitsLoaded
-		reloadBranches := m.branchesLoaded
-		m.commitsLoaded = false
-		m.branchesLoaded = false
-		m.stashDiffLoaded = false
-		m.diffLoaded = false
+		cmds := []tea.Cmd{m.refreshRepo(), m.refreshStash(), m.loadChanges()}
+		reloadCommits, reloadBranches := m.commitsLoaded, m.branchesLoaded
+		m.commitsLoaded, m.branchesLoaded = false, false
+		m.stashDiffLoaded, m.diffLoaded = false, false
 		m.diffView.SetContent("")
 		m.stashDiffView.SetContent("")
-		cmds := []tea.Cmd{m.refreshRepo(), m.refreshStash(), m.loadChanges()}
 		if reloadCommits && m.activeTab == TabHistory {
 			cmds = append(cmds, m.loadCommits())
 		}
@@ -73,12 +69,13 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stashRequest) {
 			return true, nil
 		}
-		m.stashInfo = msg.info
-		m.stashEntries = parseStashEntries(msg.info)
+		m.stashErr = msg.err
+		m.stashEntries = msg.stashes
 		if m.stashCursor >= len(m.stashEntries) {
 			m.stashCursor = max(0, len(m.stashEntries)-1)
 		}
 		m.stashDiffLoaded = false
+		m.stashDiffErr = nil
 		m.stashDiffView.SetContent("")
 		if m.activeTab == TabStash && len(m.stashEntries) > 0 {
 			return true, m.loadStashDiff(m.stashCursor)
@@ -88,8 +85,12 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.repoRequest) {
 			return true, nil
 		}
+		if msg.err != nil {
+			m.statusMsg = "refresh: " + msg.err.Error()
+			return true, nil
+		}
 		m.Repo = msg.repo
-		if msg.verificationKnown {
+		if msg.verified || msg.remoteError {
 			m.verified = msg.verified
 		}
 		return true, func() tea.Msg {
@@ -99,13 +100,19 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.changesRequest) {
 			return true, nil
 		}
+		m.changesErr = msg.err
+		if msg.err != nil {
+			m.changes = nil
+			m.diffLoaded = false
+			m.diffErr = nil
+			m.diffView.SetContent("")
+			return true, nil
+		}
 		m.changes = msg.changes
 		if m.fileCursor >= len(m.changes) {
 			m.fileCursor = max(0, len(m.changes)-1)
 		}
 		if c, ok := m.selectedChange(); ok {
-			m.diffLoaded = false
-			m.diffView.SetContent("")
 			return true, m.loadDiff(c)
 		}
 		m.diffLoaded = false
@@ -115,12 +122,24 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.matchesRequest(msg.session, m.Repo.Path, msg.request, m.diffRequest) || msg.path != m.selectedFilePath() {
 			return true, nil
 		}
+		m.diffErr = msg.err
+		if msg.err != nil {
+			m.diffLoaded = false
+			m.diffView.SetContent("")
+			return true, nil
+		}
 		m.diffLoaded = true
 		m.diffView.SetContent(colorizeDiff(msg.diff))
 		m.diffView.GotoTop()
 		return true, nil
 	case commitsLoadedMsg:
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.commitsRequest) {
+			return true, nil
+		}
+		m.commitsErr = msg.err
+		if msg.err != nil {
+			m.commitsLoaded = false
+			m.commitsView.SetContent("")
 			return true, nil
 		}
 		m.commits = msg.commits
@@ -132,10 +151,20 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.remoteRequest) {
 			return true, nil
 		}
+		if msg.err != nil {
+			m.statusMsg = "remote: " + msg.err.Error()
+			return true, nil
+		}
 		m.remote = msg.remote
 		return true, nil
 	case stashDiffLoadedMsg:
-		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stashDiffRequest) || msg.entry != m.selectedStashEntry() {
+		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stashDiffRequest) || msg.entry != m.selectedStashRef() {
+			return true, nil
+		}
+		m.stashDiffErr = msg.err
+		if msg.err != nil {
+			m.stashDiffLoaded = false
+			m.stashDiffView.SetContent("")
 			return true, nil
 		}
 		m.stashDiffLoaded = true
@@ -146,6 +175,12 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.branchesRequest) {
 			return true, nil
 		}
+		m.branchesErr = msg.err
+		if msg.err != nil {
+			m.branchesLoaded = false
+			m.branches = nil
+			return true, nil
+		}
 		m.branches = msg.branches
 		m.branchesLoaded = true
 		if m.branchCursor >= len(m.branches) {
@@ -154,6 +189,10 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case stagedDiffLoadedMsg:
 		if !m.matchesRequest(msg.session, msg.path, msg.request, m.stagedDiffRequest) {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.statusMsg = "staged diff: " + msg.err.Error()
 			return true, nil
 		}
 		m.commitDiffView.SetContent(colorizeDiff(msg.diff))
@@ -178,9 +217,11 @@ func (m *Model) updateNormal(msg tea.Msg) tea.Cmd {
 	// Global keys
 	switch key {
 	case "q":
-		return tea.Quit
+		return func() tea.Msg { return common.QuitMsg{} }
 	case "esc":
 		return func() tea.Msg { return common.SwitchToMainMsg{} }
+	case "ctrl+r":
+		return m.reloadActive()
 	case "tab":
 		return m.switchTab((m.activeTab + 1) % NumTabs)
 	case "shift+tab":
@@ -237,6 +278,20 @@ func (m *Model) switchTab(tab int) tea.Cmd {
 	return nil
 }
 
+func (m *Model) reloadActive() tea.Cmd {
+	switch m.activeTab {
+	case TabStatus:
+		return tea.Batch(m.loadChanges(), m.loadRemote())
+	case TabHistory:
+		return m.loadCommits()
+	case TabStash:
+		return m.refreshStash()
+	case TabBranches:
+		return m.loadBranches()
+	}
+	return nil
+}
+
 // Status tab: action keys + file navigation
 func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
@@ -261,7 +316,7 @@ func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "X":
-		// Delete selected untracked path, including an untracked directory.
+		// Delete selected: rm <path> (untracked, non-submodule files only)
 		if c, ok := m.selectedChange(); ok && (c.Staged == '?' || c.Unstaged == '?') && !c.IsSubmodule {
 			cmd := gitCmd(m.Repo.Path, "clean", "-d", "-f", "--", c.Path)
 			return tea.ExecProcess(cmd, m.execFinished("delete "+c.Path))
@@ -337,13 +392,13 @@ func (m *Model) updateStash(msg tea.KeyMsg) tea.Cmd {
 		return cmd
 	case "p":
 		if len(m.stashEntries) > 0 {
-			ref := fmt.Sprintf("stash@{%d}", m.stashCursor)
+			ref := m.stashEntries[m.stashCursor].Ref
 			cmd := gitCmd(m.Repo.Path, "stash", "pop", ref)
 			return tea.ExecProcess(cmd, m.execFinished("stash pop "+ref))
 		}
 	case "d":
 		if len(m.stashEntries) > 0 {
-			ref := fmt.Sprintf("stash@{%d}", m.stashCursor)
+			ref := m.stashEntries[m.stashCursor].Ref
 			cmd := gitCmd(m.Repo.Path, "stash", "drop", ref)
 			return tea.ExecProcess(cmd, m.execFinished("stash drop "+ref))
 		}
@@ -376,7 +431,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 			} else if m.branchInputAction == "rename" && len(m.branches) > 0 {
 				old := m.branches[m.branchCursor].Name
 				// `--` separator: both old and new names are user-typed.
-				cmd = exec.Command("git", "-C", m.Repo.Path, "branch", "-m", "--", old, name)
+				cmd = git.Command(m.Repo.Path, "branch", "-m", "--", old, name)
 				action = "rename " + old + " → " + name
 			}
 			if cmd != nil {
@@ -467,6 +522,7 @@ func (m *Model) moveFileCursor(delta int) tea.Cmd {
 	if m.fileCursor != prev {
 		if c, ok := m.selectedChange(); ok {
 			m.diffLoaded = false
+			m.diffErr = nil
 			m.diffView.SetContent("")
 			return m.loadDiff(c)
 		}
@@ -488,17 +544,11 @@ func (m *Model) moveStashCursor(delta int) tea.Cmd {
 	}
 	if m.stashCursor != prev {
 		m.stashDiffLoaded = false
+		m.stashDiffErr = nil
 		m.stashDiffView.SetContent("")
 		return m.loadStashDiff(m.stashCursor)
 	}
 	return nil
-}
-
-func (m *Model) selectedStashEntry() string {
-	if m.stashCursor < 0 || m.stashCursor >= len(m.stashEntries) {
-		return ""
-	}
-	return m.stashEntries[m.stashCursor]
 }
 
 func (m *Model) updateCommit(msg tea.Msg) tea.Cmd {
@@ -593,8 +643,12 @@ func (m *Model) executeAction(action Action, input string) tea.Cmd {
 		coordinator := m.Coordinator
 		key := m.Repo.CoordinatorKey()
 		return func() tea.Msg {
-			_, ran, release, err := coordinator.Acquire(context.Background(), key, true)
+			_, ran, release, err := coordinator.Acquire(m.ctx, key, true)
 			if err != nil || !ran {
+				return execFinishedMsg{action: actionName, err: err, session: m.sessionID}
+			}
+			if err := m.ctx.Err(); err != nil {
+				release()
 				return execFinishedMsg{action: actionName, err: err, session: m.sessionID}
 			}
 			return remoteOperationReadyMsg{action: actionName, cmd: cmd, release: release, session: m.sessionID}
@@ -603,11 +657,21 @@ func (m *Model) executeAction(action Action, input string) tea.Cmd {
 	return tea.ExecProcess(cmd, m.execFinished(actionName))
 }
 
-// parseStashEntries splits stash list output into individual entries.
-func parseStashEntries(info string) []string {
-	if info == "" {
-		return nil
+func (m *Model) execFinished(action string) func(error) tea.Msg {
+	session := m.sessionID
+	return func(err error) tea.Msg { return execFinishedMsg{action: action, err: err, session: session} }
+}
+
+func (m *Model) selectedStashRef() string {
+	if m.stashCursor < 0 || m.stashCursor >= len(m.stashEntries) {
+		return ""
 	}
+	return m.stashEntries[m.stashCursor].Ref
+}
+
+// parseStashEntries remains available for display-oriented callers and tests.
+// Git queries use typed StashInfo values instead.
+func parseStashEntries(info string) []string {
 	trimmed := strings.TrimSpace(info)
 	if trimmed == "" {
 		return nil

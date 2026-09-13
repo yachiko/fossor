@@ -1,6 +1,7 @@
 package mainscreen
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -75,6 +76,7 @@ type Model struct {
 	statusMsg    string
 	verification map[string]VerificationState
 	collapsed    map[string]bool
+	ctx          context.Context
 }
 
 type tableRow struct {
@@ -100,11 +102,22 @@ func New(g git.Git, rootDir, openCmd string, coordinators ...*git.OperationCoord
 		searchText:   ti,
 		verification: make(map[string]VerificationState),
 		collapsed:    make(map[string]bool),
+		ctx:          context.Background(),
 	}
 	if len(coordinators) > 0 {
 		m.Coordinator = coordinators[0]
 	}
 	return m
+}
+
+// SetContext binds background operations to the application lifetime.
+func (m *Model) SetContext(ctx context.Context) { m.ctx = ctx }
+
+func (m *Model) operationContext() context.Context {
+	if m.ctx == nil {
+		return context.Background()
+	}
+	return m.ctx
 }
 
 func (m *Model) Init() tea.Cmd {

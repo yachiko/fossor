@@ -116,6 +116,131 @@ func TestGetChanges(t *testing.T) {
 	}
 }
 
+func TestReadOnlyManageQueries(t *testing.T) {
+	dir := setupTestRepo(t)
+	g := NewExecGit()
+	ctx := context.Background()
+
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new file\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	diff, err := g.GetFileDiff(ctx, dir, "untracked.txt", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+new file") {
+		t.Errorf("untracked diff = %q, want file contents", diff)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("staged\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "add", "staged.txt"); err != nil {
+		t.Fatal(err)
+	}
+	staged, err := g.GetStagedDiff(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(staged, "+staged") {
+		t.Errorf("staged diff = %q, want staged contents", staged)
+	}
+
+	if _, err := g.RunCommand(ctx, dir, "stash", "push", "-m", "query stash"); err != nil {
+		t.Fatal(err)
+	}
+	stashes, err := g.GetStashes(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stashes) != 1 || stashes[0].Ref != "stash@{0}" || !strings.Contains(stashes[0].Message, "query stash") {
+		t.Fatalf("stashes = %#v", stashes)
+	}
+	stashDiff, err := g.GetStashDiff(ctx, dir, stashes[0].Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stashDiff, "+staged") {
+		t.Errorf("stash diff = %q, want stashed contents", stashDiff)
+	}
+
+	defaultBranch, err := g.GetBranch(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "switch", "-c", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "commit", "--allow-empty", "-m", "feature commit"); err != nil {
+		t.Fatal(err)
+	}
+	branches, err := g.GetBranches(ctx, dir, defaultBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var feature BranchInfo
+	for _, branch := range branches {
+		if branch.Name == "feature" {
+			feature = branch
+			break
+		}
+	}
+	if !feature.IsCurrent || feature.Merged || feature.Ahead != 1 || feature.Behind != 0 || feature.ComparisonError != nil {
+		t.Errorf("feature branch = %#v", feature)
+	}
+	branches, err = g.GetBranches(ctx, dir, "missing-default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) == 0 || branches[0].MergedError == nil || branches[0].ComparisonError == nil {
+		t.Errorf("missing default comparison = %#v, want per-branch errors", branches)
+	}
+}
+
+func TestGetFileDiffForSubmodule(t *testing.T) {
+	ctx := context.Background()
+	g := NewExecGit()
+	source := setupTestRepo(t)
+	destination := setupTestRepo(t)
+
+	if _, err := g.RunCommand(ctx, destination, "-c", "protocol.file.allow=always", "submodule", "add", source, "vendor/source"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, destination, "commit", "-am", "add submodule"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, source, "commit", "--allow-empty", "-m", "submodule update"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := g.RunCommand(ctx, source, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, destination, "-C", "vendor/source", "fetch", "origin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, destination, "-C", "vendor/source", "reset", "--hard", updated); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := g.GetFileDiff(ctx, destination, "vendor/source", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "Submodule vendor/source") || !strings.Contains(diff, "submodule update") {
+		t.Errorf("submodule diff = %q", diff)
+	}
+}
+
+func TestTryClearStaleLocksHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := tryClearStaleLocks(ctx, t.TempDir())
+	if err != context.Canceled {
+		t.Fatalf("tryClearStaleLocks error = %v, want context.Canceled", err)
+	}
+}
+
 func TestGetRepoInfo(t *testing.T) {
 	dir := setupTestRepo(t)
 	g := NewExecGit()
@@ -269,7 +394,7 @@ func TestTryClearStaleLocksInLinkedWorktree(t *testing.T) {
 	if err := os.Chtimes(lock, past, past); err != nil {
 		t.Fatal(err)
 	}
-	cleared, err := tryClearStaleLocks(linked)
+	cleared, err := tryClearStaleLocks(context.Background(), linked)
 	if err != nil || len(cleared) != 1 || cleared[0] != lock {
 		t.Fatalf("cleared=%v err=%v, want %s", cleared, err, lock)
 	}
@@ -479,7 +604,7 @@ func TestTryClearStaleLocks(t *testing.T) {
 		lock := filepath.Join(root, ".git", "index.lock")
 		writeLock(t, lock, 500*time.Millisecond)
 
-		cleared, err := tryClearStaleLocks(root)
+		cleared, err := tryClearStaleLocks(context.Background(), root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -496,7 +621,7 @@ func TestTryClearStaleLocks(t *testing.T) {
 		lock := filepath.Join(root, ".git", "index.lock")
 		writeLock(t, lock, 0) // brand new
 
-		cleared, err := tryClearStaleLocks(root)
+		cleared, err := tryClearStaleLocks(context.Background(), root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -515,7 +640,7 @@ func TestTryClearStaleLocks(t *testing.T) {
 		writeLock(t, l1, 500*time.Millisecond)
 		writeLock(t, l2, 500*time.Millisecond)
 
-		cleared, err := tryClearStaleLocks(root)
+		cleared, err := tryClearStaleLocks(context.Background(), root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -526,7 +651,7 @@ func TestTryClearStaleLocks(t *testing.T) {
 
 	t.Run("no-op when no locks exist", func(t *testing.T) {
 		root := makeRepoDirs(t)
-		cleared, err := tryClearStaleLocks(root)
+		cleared, err := tryClearStaleLocks(context.Background(), root)
 		if err != nil {
 			t.Fatal(err)
 		}
