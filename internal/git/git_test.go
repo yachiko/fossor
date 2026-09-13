@@ -138,10 +138,10 @@ func TestGetChangesUsesRenameDestinationPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 1 || changes[0].Staged != 'R' || changes[0].Path != "renamed-to.txt" {
+	if len(changes) != 1 || changes[0].Staged != 'R' || changes[0].DestinationPath != "renamed-to.txt" {
 		t.Fatalf("GetChanges() = %#v, want staged rename to renamed-to.txt", changes)
 	}
-	diff, err := g.GetFileDiff(ctx, dir, changes[0].Path, false)
+	diff, err := g.GetFileDiff(ctx, dir, changes[0].DestinationPath, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,11 +509,13 @@ func TestSanitize(t *testing.T) {
 		in, want string
 	}{
 		{"plain ascii", "plain ascii"},
+		{"valid Unicode 🚀 Łukasz", "valid Unicode 🚀 Łukasz"},
 		{"with\ttab", "with\ttab"},
 		{"esc \x1b[2J clear", "esc ?[2J clear"},
 		{"bel\x07 newline\n cr\r", "bel? newline? cr?"},
 		{"del\x7f", "del?"},
-		{"C1 \x9bevil", "C1 ?evil"},
+		{"malformed C1 \x9bevil", "malformed C1 �evil"},
+		{"encoded C1 \u009bevil", "encoded C1 ?evil"},
 		{"", ""},
 	}
 	for _, c := range cases {
@@ -523,7 +525,7 @@ func TestSanitize(t *testing.T) {
 	}
 }
 
-func TestGetLogSanitizesCommitFields(t *testing.T) {
+func TestGetLogPreservesRawCommitFields(t *testing.T) {
 	dir := setupTestRepo(t)
 	// Plant a commit with ANSI escape in subject and author.
 	cmds := [][]string{
@@ -543,15 +545,15 @@ func TestGetLogSanitizesCommitFields(t *testing.T) {
 	if err != nil || len(commits) != 1 {
 		t.Fatalf("GetLog: err=%v len=%d", err, len(commits))
 	}
-	if containsControl(commits[0].Subject) {
-		t.Errorf("Subject still contains control chars: %q", commits[0].Subject)
+	if !containsControl(commits[0].Subject) {
+		t.Errorf("Subject was unexpectedly sanitized: %q", commits[0].Subject)
 	}
-	if containsControl(commits[0].Author) {
-		t.Errorf("Author still contains control chars: %q", commits[0].Author)
+	if !containsControl(commits[0].Author) {
+		t.Errorf("Author was unexpectedly sanitized: %q", commits[0].Author)
 	}
 }
 
-func TestDetectDefaultBranchSanitizesPoisonedHEAD(t *testing.T) {
+func TestDetectDefaultBranchPreservesRawPoisonedHEAD(t *testing.T) {
 	dir := setupTestRepo(t)
 	// Plant a poisoned refs/remotes/origin/HEAD whose ref name is an arg-injection payload.
 	headPath := filepath.Join(dir, ".git", "refs", "remotes", "origin")
@@ -564,8 +566,8 @@ func TestDetectDefaultBranchSanitizesPoisonedHEAD(t *testing.T) {
 	}
 	g := NewExecGit()
 	got := g.DetectDefaultBranch(context.Background(), dir)
-	if containsControl(got) {
-		t.Errorf("DetectDefaultBranch returned control chars: %q", got)
+	if !containsControl(got) {
+		t.Errorf("DetectDefaultBranch was unexpectedly sanitized: %q", got)
 	}
 	// Note: the leading "--" is intentionally still allowed through here; PR-2
 	// addresses that with the -- separator on the consumer side.

@@ -11,7 +11,7 @@ import (
 
 func TestDiffResultMustMatchCurrentSelectionAndRequest(t *testing.T) {
 	m := NewWithCoordinator(nil, git.RepoInfo{Path: "/repo"}, true, nil, 7)
-	m.changes = []git.ChangeInfo{{Path: "old.go"}, {Path: "new.go"}}
+	m.changes = []git.ChangeInfo{{DestinationPath: "old.go"}, {DestinationPath: "new.go"}}
 	m.diffLoaded = true
 	m.diffView.SetContent("old preview")
 	m.moveFileCursor(1)
@@ -30,7 +30,7 @@ func TestDiffResultMustMatchCurrentSelectionAndRequest(t *testing.T) {
 
 func TestDeleteAllowsUntrackedStatusInEitherColumn(t *testing.T) {
 	m := New(nil, git.RepoInfo{Path: "/repo"}, true)
-	m.changes = []git.ChangeInfo{{Unstaged: '?', Path: "untracked"}}
+	m.changes = []git.ChangeInfo{{Unstaged: '?', DestinationPath: "untracked"}}
 	if cmd := m.updateStatus(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")}); cmd == nil {
 		t.Fatal("uppercase X did not start deletion for an untracked path")
 	}
@@ -45,7 +45,7 @@ func TestLoaderErrorsDoNotAppearAsEmptyData(t *testing.T) {
 		t.Fatalf("changes error was not retained: err=%v changes=%v", m.changesErr, m.changes)
 	}
 
-	m.changes = []git.ChangeInfo{{Path: "old.go"}, {Path: "new.go"}}
+	m.changes = []git.ChangeInfo{{DestinationPath: "old.go"}, {DestinationPath: "new.go"}}
 	m.diffRequest = 2
 	m.fileCursor = 1
 	m.HandleInternalMsg(diffLoadedMsg{path: "old.go", diff: "old", session: 3, request: 1})

@@ -292,7 +292,7 @@ func TestE2E_UntrackedDir(t *testing.T) {
 	// With -uall, individual files should be listed, not just "subdir/"
 	paths := make(map[string]bool)
 	for _, c := range changes {
-		paths[c.Path] = true
+		paths[c.DestinationPath] = true
 	}
 	if !paths["subdir/a.txt"] {
 		t.Errorf("expected subdir/a.txt in changes, got %v", paths)
@@ -337,8 +337,41 @@ func TestE2E_PorcelainLeadingSpace(t *testing.T) {
 	if c.Unstaged != 'M' {
 		t.Errorf("expected Unstaged=='M', got %c", c.Unstaged)
 	}
-	if c.Path != "tracked.txt" {
-		t.Errorf("expected Path=='tracked.txt', got %q", c.Path)
+	if c.DestinationPath != "tracked.txt" {
+		t.Errorf("expected DestinationPath=='tracked.txt', got %q", c.DestinationPath)
+	}
+}
+
+func TestE2E_PorcelainZPreservesPathsAndRenameEndpoints(t *testing.T) {
+	repo := setupRepo(t)
+	g := git.NewExecGit()
+	ctx := context.Background()
+
+	oldName := " old\t\"rocket-🚀[x].txt "
+	newName := " new\t\"Łukasz[*].txt "
+	if err := os.WriteFile(filepath.Join(repo, oldName), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, repo, "add", oldName)
+	gitCmd(t, repo, "commit", "-m", "add unusual filename")
+	gitCmd(t, repo, "mv", oldName, newName)
+
+	changes, err := g.GetChanges(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("expected one rename, got %+v", changes)
+	}
+	c := changes[0]
+	if c.Staged != 'R' {
+		t.Fatalf("expected rename status, got %q", c.Staged)
+	}
+	if c.SourcePath != oldName || c.DestinationPath != newName {
+		t.Errorf("rename endpoints = (%q, %q), want (%q, %q)", c.SourcePath, c.DestinationPath, oldName, newName)
+	}
+	if got := c.Pathspecs(); len(got) != 2 || got[0] != oldName || got[1] != newName {
+		t.Errorf("Pathspecs() = %#v", got)
 	}
 }
 
@@ -373,7 +406,7 @@ func TestE2E_StagedAndUnstaged(t *testing.T) {
 
 	byPath := make(map[string]git.ChangeInfo)
 	for _, c := range changes {
-		byPath[c.Path] = c
+		byPath[c.DestinationPath] = c
 	}
 
 	// staged.txt should have Staged=='M' and Unstaged==' '

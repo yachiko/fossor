@@ -1,6 +1,10 @@
 package manageview
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -209,5 +213,116 @@ func TestRefArgSeparator(t *testing.T) {
 				t.Errorf("expected `--` separator in %q", joined)
 			}
 		})
+	}
+}
+
+func TestSelectedPathActionsUseLiteralRenameEndpoints(t *testing.T) {
+	change := git.ChangeInfo{
+		SourcePath:      " old [*].txt",
+		DestinationPath: "new \t🚀?.txt ",
+	}
+	for _, action := range AllActions() {
+		if !action.UsesSelected {
+			continue
+		}
+		if action.BuildSelectedCmd == nil {
+			t.Fatalf("%s has no selected change builder", action.Name)
+		}
+		args := action.BuildSelectedCmd(git.RepoInfo{Path: "/repo"}, change).Args
+		for _, path := range change.Pathspecs() {
+			want := ":(literal)" + path
+			found := false
+			for _, arg := range args {
+				if arg == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s args %q missing literal pathspec %q", action.Name, args, want)
+			}
+		}
+	}
+}
+
+func TestStageSelectedRenameWithLiteralPathspecs(t *testing.T) {
+	repo := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	oldPath := " old [*].txt"
+	newPath := "new \t🚀?.txt "
+	if err := os.WriteFile(filepath.Join(repo, oldPath), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", oldPath)
+	runGit("commit", "-m", "initial")
+	runGit("mv", oldPath, newPath)
+	runGit("reset") // Make the filesystem rename unstaged for the selected-stage action.
+
+	var stage Action
+	for _, action := range AllActions() {
+		if action.Key == "i" {
+			stage = action
+			break
+		}
+	}
+	if stage.BuildSelectedCmd == nil {
+		t.Fatal("stage selected action missing")
+	}
+	change := git.ChangeInfo{SourcePath: oldPath, DestinationPath: newPath}
+	if out, err := stage.BuildSelectedCmd(git.RepoInfo{Path: repo}, change).CombinedOutput(); err != nil {
+		t.Fatalf("stage selected rename: %s: %v", out, err)
+	}
+	cmd := exec.Command("git", "-C", repo, "diff", "--cached", "--name-status", "-z")
+	out, err := cmd.Output()
+	if err != nil || !bytes.Contains(out, []byte(oldPath)) || !bytes.Contains(out, []byte(newPath)) {
+		t.Fatalf("staged rename = %q, err=%v", out, err)
+	}
+}
+
+func TestRestoreUnstagedRenameUsesLiteralEndpoints(t *testing.T) {
+	repo := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	oldPath := " old [*].txt"
+	newPath := "new \t🚀?.txt "
+	if err := os.WriteFile(filepath.Join(repo, oldPath), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", oldPath)
+	runGit("commit", "-m", "initial")
+	runGit("mv", oldPath, newPath)
+	runGit("reset")
+
+	change := git.ChangeInfo{SourcePath: oldPath, DestinationPath: newPath}
+	for _, cmd := range restoreChangeCmds(repo, change) {
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("restore command %q: %s: %v", cmd.Args, out, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, oldPath)); err != nil {
+		t.Fatalf("restored source missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, newPath)); !os.IsNotExist(err) {
+		t.Fatalf("rename destination still exists: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output(); err != nil || len(out) != 0 {
+		t.Fatalf("repo not restored: %q, err=%v", out, err)
 	}
 }

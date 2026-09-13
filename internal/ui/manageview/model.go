@@ -292,12 +292,29 @@ func (m *Model) loadChanges() tea.Cmd {
 }
 
 func (m *Model) loadDiff(change git.ChangeInfo) tea.Cmd {
-	repoPath, filePath, isSubmodule := m.Repo.Path, change.Path, change.IsSubmodule
+	repoPath := m.Repo.Path
+	filePath := change.DestinationPath
+	isSubmodule := change.IsSubmodule
 	m.diffRequest++
 	request, session := m.diffRequest, m.sessionID
 	return func() tea.Msg {
-		diff, err := m.Git.GetFileDiff(m.ctx, repoPath, filePath, isSubmodule)
-		return diffLoadedMsg{path: filePath, diff: diff, err: err, session: session, request: request}
+		var diff string
+		if isSubmodule {
+			// Show commit log range for submodule changes
+			cmd := gitPathCmd(repoPath, []string{"diff", "--submodule=log", "HEAD"}, change.Pathspecs()...)
+			out, _ := cmd.Output()
+			diff = string(out)
+		} else {
+			cmd := gitPathCmd(repoPath, []string{"diff", "HEAD"}, change.Pathspecs()...)
+			out, _ := cmd.Output()
+			diff = string(out)
+			if diff == "" {
+				cmd = gitPathCmd(repoPath, []string{"diff", "--no-index", "/dev/null"}, filePath)
+				out, _ = cmd.Output()
+				diff = string(out)
+			}
+		}
+		return diffLoadedMsg{path: filePath, diff: diff, session: session, request: request}
 	}
 }
 
@@ -383,13 +400,6 @@ func (m *Model) refreshRepo() tea.Cmd {
 	}
 }
 
-func (m *Model) selectedFilePath() string {
-	if len(m.changes) == 0 || m.fileCursor >= len(m.changes) {
-		return ""
-	}
-	return m.changes[m.fileCursor].Path
-}
-
 func (m *Model) selectedChange() (git.ChangeInfo, bool) {
 	if len(m.changes) == 0 || m.fileCursor >= len(m.changes) {
 		return git.ChangeInfo{}, false
@@ -408,8 +418,8 @@ func renderCommits(commits []git.CommitInfo) string {
 
 	var b strings.Builder
 	for _, c := range commits {
-		fmt.Fprintf(&b, "  %s %s\n", hashStyle.Render(c.Short), c.Subject)
-		fmt.Fprintf(&b, "  %s  %s\n\n", authorStyle.Render(c.Author), authorStyle.Render(c.Date.Format("2006-01-02 15:04")))
+		fmt.Fprintf(&b, "  %s %s\n", hashStyle.Render(git.Sanitize(c.Short)), git.Sanitize(c.Subject))
+		fmt.Fprintf(&b, "  %s  %s\n\n", authorStyle.Render(git.Sanitize(c.Author)), authorStyle.Render(c.Date.Format("2006-01-02 15:04")))
 	}
 	return b.String()
 }

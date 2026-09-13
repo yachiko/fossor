@@ -38,7 +38,7 @@ func colorizeDiff(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	lines := strings.Split(raw, "\n")
+	lines := strings.Split(git.Sanitize(raw), "\n")
 	var b strings.Builder
 	var oldLine, newLine int
 
@@ -117,7 +117,7 @@ func (m *Model) stagedFilesList() string {
 	var paths []string
 	for _, c := range m.changes {
 		if c.Staged != ' ' && c.Staged != 0 && c.Staged != '?' {
-			paths = append(paths, c.Path)
+			paths = append(paths, git.Sanitize(c.DestinationPath))
 		}
 	}
 	if len(paths) == 0 {
@@ -165,11 +165,11 @@ func fileChangeIndicator(c git.ChangeInfo) string {
 
 // truncate shortens a string with "..." if it exceeds maxLen.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if len([]rune(s)) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string([]rune(s)[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string([]rune(s)[:maxLen-3]) + "..."
 }

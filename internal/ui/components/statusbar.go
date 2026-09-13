@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/yachiko/fossor/internal/git"
 )
 
 var barStyle = lipgloss.NewStyle().
@@ -47,7 +49,7 @@ func StatusBar(width int, rows ...interface{}) string {
 	msgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#DBBD70"))
 	var lines []string
 	if message != "" {
-		lines = append(lines, msgStyle.Render(message))
+		lines = append(lines, msgStyle.Render(git.Sanitize(message)))
 	} else {
 		lines = append(lines, "")
 	}

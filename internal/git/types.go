@@ -74,10 +74,20 @@ type CommitInfo struct {
 
 // ChangeInfo represents a file change from git status.
 type ChangeInfo struct {
-	Staged      byte // first char of porcelain status
-	Unstaged    byte // second char of porcelain status
-	Path        string
-	IsSubmodule bool
+	Staged          byte   // first char of porcelain status
+	Unstaged        byte   // second char of porcelain status
+	SourcePath      string // raw pre-rename path; empty unless this is a rename/copy
+	DestinationPath string // raw current path; the primary path for single-path operations
+	IsSubmodule     bool
+}
+
+// Pathspecs returns raw paths affected by this change. Renames and copies need
+// both endpoints so selected-file operations do not leave half the change behind.
+func (c ChangeInfo) Pathspecs() []string {
+	if c.SourcePath == "" {
+		return []string{c.DestinationPath}
+	}
+	return []string{c.SourcePath, c.DestinationPath}
 }
 
 // StashInfo describes one entry in the stash reflog.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/yachiko/fossor/internal/git"
 	"github.com/yachiko/fossor/internal/ui/common"
 )
 
@@ -43,7 +44,7 @@ func (m *Model) viewStash() string {
 			end = len(m.stashEntries)
 		}
 		for i := m.stashScroll; i < end; i++ {
-			label := truncate(m.stashEntries[i].Ref+": "+m.stashEntries[i].Message, listWidth-4)
+			label := truncate(git.Sanitize(m.stashEntries[i].Ref)+": "+git.Sanitize(m.stashEntries[i].Message), listWidth-4)
 			if i == m.stashCursor {
 				sel := lipgloss.NewStyle().Background(common.ColorSurface).Foreground(common.ColorWhite)
 				entryList.WriteString(sel.Render("> "+label) + "\n")

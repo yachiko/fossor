@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/yachiko/fossor/internal/git"
 	"github.com/yachiko/fossor/internal/ui/common"
 	"github.com/yachiko/fossor/internal/ui/components"
 )
@@ -80,7 +81,7 @@ func (m *Model) viewBranches() string {
 				prefix = "> "
 			}
 
-			name := truncate(br.Name, colName)
+			name := truncate(git.Sanitize(br.Name), colName)
 			if br.IsCurrent {
 				name = lipgloss.NewStyle().Foreground(common.ColorGreen).Bold(true).Render(name)
 			}
@@ -110,8 +111,8 @@ func (m *Model) viewBranches() string {
 				aheadCol.Render(aheadStr) +
 				behindCol.Render(behindStr) +
 				mergedCol.Render(mergedStr) +
-				dateCol.Render(disabledStyle.Render(br.LastDate)) +
-				disabledStyle.Render(truncate(br.LastMsg, colMsg))
+				dateCol.Render(disabledStyle.Render(git.Sanitize(br.LastDate))) +
+				disabledStyle.Render(truncate(git.Sanitize(br.LastMsg), colMsg))
 
 			if i == m.branchCursor {
 				b.WriteString(lipgloss.NewStyle().Background(common.ColorSurface).Width(m.width).Render(row) + "\n")

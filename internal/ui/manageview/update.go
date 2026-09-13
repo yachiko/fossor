@@ -119,7 +119,8 @@ func (m *Model) HandleInternalMsg(msg tea.Msg) (bool, tea.Cmd) {
 		m.diffView.SetContent("")
 		return true, nil
 	case diffLoadedMsg:
-		if !m.matchesRequest(msg.session, m.Repo.Path, msg.request, m.diffRequest) || msg.path != m.selectedFilePath() {
+		change, ok := m.selectedChange()
+		if !m.matchesRequest(msg.session, m.Repo.Path, msg.request, m.diffRequest) || !ok || msg.path != change.DestinationPath {
 			return true, nil
 		}
 		m.diffErr = msg.err
@@ -311,15 +312,19 @@ func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 	case "x":
 		// Restore selected: git checkout -- <path> (tracked, non-submodule files only)
 		if c, ok := m.selectedChange(); ok && c.Staged != '?' && !c.IsSubmodule {
-			cmd := gitCmd(m.Repo.Path, "checkout", "--", c.Path)
-			return tea.ExecProcess(cmd, m.execFinished("restore "+c.Path))
+			cmds := restoreChangeCmds(m.Repo.Path, c)
+			processes := make([]tea.Cmd, 0, len(cmds))
+			for _, cmd := range cmds {
+				processes = append(processes, tea.ExecProcess(cmd, m.execFinished("restore "+c.DestinationPath)))
+			}
+			return tea.Sequence(processes...)
 		}
 		return nil
 	case "X":
 		// Delete selected: rm <path> (untracked, non-submodule files only)
 		if c, ok := m.selectedChange(); ok && (c.Staged == '?' || c.Unstaged == '?') && !c.IsSubmodule {
-			cmd := gitCmd(m.Repo.Path, "clean", "-d", "-f", "--", c.Path)
-			return tea.ExecProcess(cmd, m.execFinished("delete "+c.Path))
+			cmd := gitPathCmd(m.Repo.Path, []string{"clean", "-d", "-f"}, c.DestinationPath)
+			return tea.ExecProcess(cmd, m.execFinished("delete "+c.DestinationPath))
 		}
 		return nil
 	}
@@ -353,11 +358,11 @@ func (m *Model) updateStatus(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	if action.UsesSelected {
-		p := m.selectedFilePath()
-		if p == "" {
+		change, ok := m.selectedChange()
+		if !ok || change.DestinationPath == "" {
 			return nil
 		}
-		return m.executeAction(action, p)
+		return m.executeSelectedAction(action, change)
 	}
 
 	if action.NeedsInput {
@@ -471,7 +476,7 @@ func (m *Model) updateBranches(msg tea.KeyMsg) tea.Cmd {
 		if len(m.branches) > 0 {
 			m.branchInputMode = true
 			m.branchInputAction = "rename"
-			m.branchInput.Placeholder = "New name for " + m.branches[m.branchCursor].Name + "..."
+			m.branchInput.Placeholder = "New name for " + git.Sanitize(m.branches[m.branchCursor].Name) + "..."
 			m.branchInput.SetValue("")
 			m.branchInput.Focus()
 			return m.branchInput.Cursor.BlinkCmd()
@@ -667,6 +672,14 @@ func (m *Model) selectedStashRef() string {
 		return ""
 	}
 	return m.stashEntries[m.stashCursor].Ref
+}
+
+func (m *Model) executeSelectedAction(action Action, change git.ChangeInfo) tea.Cmd {
+	if action.BuildSelectedCmd == nil {
+		return m.executeAction(action, change.DestinationPath)
+	}
+	cmd := action.BuildSelectedCmd(m.Repo, change)
+	return tea.ExecProcess(cmd, m.execFinished(action.Name))
 }
 
 // parseStashEntries remains available for display-oriented callers and tests.

@@ -142,7 +142,10 @@ func AllActions() []Action {
 			UsesSelected: true,
 			Enabled:      func(r git.RepoInfo) bool { return r.Changes > 0 },
 			BuildCmd: func(r git.RepoInfo, input string) *exec.Cmd {
-				return gitCmd(r.Path, "add", "--", input)
+				return gitPathCmd(r.Path, []string{"add"}, input)
+			},
+			BuildSelectedCmd: func(r git.RepoInfo, c git.ChangeInfo) *exec.Cmd {
+				return gitPathCmd(r.Path, []string{"add"}, c.Pathspecs()...)
 			},
 		},
 		{
@@ -152,7 +155,10 @@ func AllActions() []Action {
 			UsesSelected: true,
 			Enabled:      func(r git.RepoInfo) bool { return r.Changes > 0 },
 			BuildCmd: func(r git.RepoInfo, input string) *exec.Cmd {
-				return gitCmd(r.Path, "reset", "HEAD", "--", input)
+				return gitPathCmd(r.Path, []string{"reset", "HEAD"}, input)
+			},
+			BuildSelectedCmd: func(r git.RepoInfo, c git.ChangeInfo) *exec.Cmd {
+				return gitPathCmd(r.Path, []string{"reset", "HEAD"}, c.Pathspecs()...)
 			},
 		},
 		{
