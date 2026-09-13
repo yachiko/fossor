@@ -45,6 +45,19 @@ func (g *discoveryTestGit) GetAheadBehind(context.Context, string, string) (int,
 	return 0, 0, nil
 }
 func (g *discoveryTestGit) GetChanges(context.Context, string) ([]ChangeInfo, error) { return nil, nil }
+func (g *discoveryTestGit) GetFileDiff(context.Context, string, string, bool) (string, error) {
+	return "", nil
+}
+func (g *discoveryTestGit) GetStagedDiff(context.Context, string) (string, error) { return "", nil }
+func (g *discoveryTestGit) GetStashes(context.Context, string) ([]StashInfo, error) {
+	return nil, nil
+}
+func (g *discoveryTestGit) GetStashDiff(context.Context, string, string) (string, error) {
+	return "", nil
+}
+func (g *discoveryTestGit) GetBranches(context.Context, string, string) ([]BranchInfo, error) {
+	return nil, nil
+}
 func (g *discoveryTestGit) GetLog(context.Context, string, int) ([]CommitInfo, error) {
 	return nil, nil
 }

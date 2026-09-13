@@ -44,17 +44,12 @@ type Model struct {
 	verified                bool
 	verifyAfterRefresh      bool
 	remoteErrorAfterRefresh bool
+	ctx                     context.Context
 	sessionID               uint64
 
-	changesRequest    uint64
-	diffRequest       uint64
-	commitsRequest    uint64
-	remoteRequest     uint64
-	repoRequest       uint64
-	stashRequest      uint64
-	stashDiffRequest  uint64
-	branchesRequest   uint64
-	stagedDiffRequest uint64
+	changesRequest, diffRequest, commitsRequest, remoteRequest   uint64
+	repoRequest, stashRequest, stashDiffRequest, branchesRequest uint64
+	stagedDiffRequest                                            uint64
 
 	activeTab int
 
@@ -71,12 +66,14 @@ type Model struct {
 	fileScroll int
 	diffView   viewport.Model
 	diffLoaded bool
+	changesErr error
+	diffErr    error
 
 	// Status tab: last action
 	lastAction string
 	lastOutput string
 	lastErr    error
-	stashInfo  string
+	stashErr   error
 
 	// Commit mode
 	commitInput    textarea.Model
@@ -86,37 +83,29 @@ type Model struct {
 	commits       []git.CommitInfo
 	commitsLoaded bool
 	commitsView   viewport.Model
+	commitsErr    error
 
 	// Stash tab
-	stashEntries    []string
+	stashEntries    []git.StashInfo
 	stashCursor     int
 	stashScroll     int
 	stashDiffView   viewport.Model
 	stashDiffLoaded bool
+	stashDiffErr    error
 
 	// Branches tab
-	branches          []branchInfo
+	branches          []git.BranchInfo
 	branchesLoaded    bool
 	branchCursor      int
 	branchScroll      int
 	branchInputMode   bool   // true when entering new branch name or rename
 	branchInputAction string // "create" or "rename"
 	branchInput       textinput.Model
+	branchesErr       error
 
 	width     int
 	height    int
 	statusMsg string
-}
-
-// branchInfo holds info about a local branch.
-type branchInfo struct {
-	Name      string
-	IsCurrent bool
-	Merged    bool   // fully merged into default branch
-	LastDate  string // formatted date of last commit
-	LastMsg   string // subject of last commit
-	Ahead     int    // commits ahead of default branch
-	Behind    int    // commits behind default branch
 }
 
 // Internal messages
@@ -135,24 +124,26 @@ type remoteOperationReadyMsg struct {
 }
 
 type stashInfoMsg struct {
-	info    string
+	stashes []git.StashInfo
+	err     error
 	session uint64
 	path    string
 	request uint64
 }
 
 type repoRefreshedMsg struct {
-	repo              git.RepoInfo
-	verified          bool
-	remoteError       bool
-	verificationKnown bool
-	session           uint64
-	path              string
-	request           uint64
+	repo        git.RepoInfo
+	verified    bool
+	remoteError bool
+	err         error
+	session     uint64
+	path        string
+	request     uint64
 }
 
 type changesLoadedMsg struct {
 	changes []git.ChangeInfo
+	err     error
 	session uint64
 	path    string
 	request uint64
@@ -161,12 +152,14 @@ type changesLoadedMsg struct {
 type diffLoadedMsg struct {
 	path    string
 	diff    string
+	err     error
 	session uint64
 	request uint64
 }
 
 type commitsLoadedMsg struct {
 	commits []git.CommitInfo
+	err     error
 	session uint64
 	path    string
 	request uint64
@@ -174,6 +167,7 @@ type commitsLoadedMsg struct {
 
 type remoteLoadedMsg struct {
 	remote  string
+	err     error
 	session uint64
 	path    string
 	request uint64
@@ -181,6 +175,7 @@ type remoteLoadedMsg struct {
 
 type stashDiffLoadedMsg struct {
 	diff    string
+	err     error
 	entry   string
 	session uint64
 	path    string
@@ -189,13 +184,15 @@ type stashDiffLoadedMsg struct {
 
 type stagedDiffLoadedMsg struct {
 	diff    string
+	err     error
 	session uint64
 	path    string
 	request uint64
 }
 
 type branchesLoadedMsg struct {
-	branches []branchInfo
+	branches []git.BranchInfo
+	err      error
 	session  uint64
 	path     string
 	request  uint64
@@ -242,6 +239,7 @@ func newModel(g git.Git, repo git.RepoInfo, isVerified bool, coordinator *git.Op
 		Git:            g,
 		Coordinator:    coordinator,
 		verified:       isVerified,
+		ctx:            context.Background(),
 		actions:        actions,
 		keyMap:         km,
 		textInput:      ti,
@@ -272,8 +270,12 @@ func (m *Model) UpdateRepo(repo git.RepoInfo) {
 }
 
 // SetVerified updates remote verification supplied by the application shell.
-func (m *Model) SetVerified(verified bool) {
-	m.verified = verified
+func (m *Model) SetVerified(verified bool) { m.verified = verified }
+
+// SetContext binds background loaders to the active manage-view session.
+func (m *Model) SetContext(ctx context.Context, sessionID uint64) {
+	m.ctx = ctx
+	m.sessionID = sessionID
 }
 
 // Data loaders
@@ -284,36 +286,18 @@ func (m *Model) loadChanges() tea.Cmd {
 	m.changesRequest++
 	request, session := m.changesRequest, m.sessionID
 	return func() tea.Msg {
-		ctx := context.Background()
-		changes, _ := g.GetChanges(ctx, path)
-		return changesLoadedMsg{changes: changes, session: session, path: path, request: request}
+		changes, err := g.GetChanges(m.ctx, path)
+		return changesLoadedMsg{changes: changes, err: err, session: session, path: path, request: request}
 	}
 }
 
 func (m *Model) loadDiff(change git.ChangeInfo) tea.Cmd {
-	repoPath := m.Repo.Path
-	filePath := change.Path
-	isSubmodule := change.IsSubmodule
+	repoPath, filePath, isSubmodule := m.Repo.Path, change.Path, change.IsSubmodule
 	m.diffRequest++
 	request, session := m.diffRequest, m.sessionID
 	return func() tea.Msg {
-		var diff string
-		if isSubmodule {
-			// Show commit log range for submodule changes
-			cmd := exec.Command("git", "-C", repoPath, "diff", "--submodule=log", "HEAD", "--", filePath)
-			out, _ := cmd.Output()
-			diff = string(out)
-		} else {
-			cmd := exec.Command("git", "-C", repoPath, "diff", "HEAD", "--", filePath)
-			out, _ := cmd.Output()
-			diff = string(out)
-			if diff == "" {
-				cmd = exec.Command("git", "-C", repoPath, "diff", "--no-index", "--", "/dev/null", filePath)
-				out, _ = cmd.Output()
-				diff = string(out)
-			}
-		}
-		return diffLoadedMsg{path: filePath, diff: diff, session: session, request: request}
+		diff, err := m.Git.GetFileDiff(m.ctx, repoPath, filePath, isSubmodule)
+		return diffLoadedMsg{path: filePath, diff: diff, err: err, session: session, request: request}
 	}
 }
 
@@ -323,9 +307,8 @@ func (m *Model) loadRemote() tea.Cmd {
 	m.remoteRequest++
 	request, session := m.remoteRequest, m.sessionID
 	return func() tea.Msg {
-		ctx := context.Background()
-		remote, _ := g.GetRemote(ctx, path)
-		return remoteLoadedMsg{remote: remote, session: session, path: path, request: request}
+		remote, err := g.GetRemote(m.ctx, path)
+		return remoteLoadedMsg{remote: remote, err: err, session: session, path: path, request: request}
 	}
 }
 
@@ -335,9 +318,8 @@ func (m *Model) loadCommits() tea.Cmd {
 	m.commitsRequest++
 	request, session := m.commitsRequest, m.sessionID
 	return func() tea.Msg {
-		ctx := context.Background()
-		commits, _ := g.GetLog(ctx, path, 50)
-		return commitsLoadedMsg{commits: commits, session: session, path: path, request: request}
+		commits, err := g.GetLog(m.ctx, path, 50)
+		return commitsLoadedMsg{commits: commits, err: err, session: session, path: path, request: request}
 	}
 }
 
@@ -350,67 +332,18 @@ func (m *Model) loadStashDiff(index int) tea.Cmd {
 	m.stashDiffRequest++
 	request, session := m.stashDiffRequest, m.sessionID
 	return func() tea.Msg {
-		ref := fmt.Sprintf("stash@{%d}", index)
-		cmd := exec.Command("git", "-C", repoPath, "stash", "show", "-p", ref)
-		out, _ := cmd.Output()
-		return stashDiffLoadedMsg{diff: string(out), entry: entry, session: session, path: repoPath, request: request}
+		diff, err := m.Git.GetStashDiff(m.ctx, repoPath, entry.Ref)
+		return stashDiffLoadedMsg{diff: diff, err: err, entry: entry.Ref, session: session, path: repoPath, request: request}
 	}
 }
 
 func (m *Model) loadBranches() tea.Cmd {
-	repoPath := m.Repo.Path
-	defaultBranch := m.Repo.DefaultBranch
+	repoPath, defaultBranch := m.Repo.Path, m.Repo.DefaultBranch
 	m.branchesRequest++
 	request, session := m.branchesRequest, m.sessionID
 	return func() tea.Msg {
-		cmd := exec.Command("git", "-C", repoPath, "for-each-ref",
-			"--sort=-committerdate",
-			"--format=%(refname:short)\t%(HEAD)\t%(committerdate:short)\t%(subject)",
-			"refs/heads/")
-		out, _ := cmd.Output()
-
-		// Get merged branches. `--` separator: defaultBranch is repo-controlled.
-		mergedCmd := exec.Command("git", "-C", repoPath, "branch", "--merged", "--", defaultBranch)
-		mergedOut, _ := mergedCmd.Output()
-		mergedSet := make(map[string]bool)
-		for _, line := range strings.Split(strings.TrimSpace(string(mergedOut)), "\n") {
-			name := strings.TrimSpace(strings.TrimPrefix(line, "*"))
-			if name != "" {
-				mergedSet[name] = true
-			}
-		}
-
-		var branches []branchInfo
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 4)
-			if len(parts) < 4 {
-				continue
-			}
-			name := git.Sanitize(parts[0])
-			bi := branchInfo{
-				Name:      name,
-				IsCurrent: parts[1] == "*",
-				LastDate:  git.Sanitize(parts[2]),
-				LastMsg:   git.Sanitize(parts[3]),
-				Merged:    mergedSet[parts[0]],
-			}
-			// Compute ahead/behind relative to default branch. `--` separator:
-			// defaultBranch and bi.Name are both repo-controlled and the
-			// joined refspec could otherwise be parsed as a flag.
-			if bi.Name != defaultBranch {
-				revCmd := exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count",
-					"--", defaultBranch+"..."+bi.Name)
-				revOut, err := revCmd.Output()
-				if err == nil {
-					_, _ = fmt.Sscanf(strings.TrimSpace(string(revOut)), "%d\t%d", &bi.Behind, &bi.Ahead)
-				}
-			}
-			branches = append(branches, bi)
-		}
-		return branchesLoadedMsg{branches: branches, session: session, path: repoPath, request: request}
+		branches, err := m.Git.GetBranches(m.ctx, repoPath, defaultBranch)
+		return branchesLoadedMsg{branches: branches, err: err, session: session, path: repoPath, request: request}
 	}
 }
 
@@ -419,9 +352,8 @@ func (m *Model) loadStagedDiff() tea.Cmd {
 	m.stagedDiffRequest++
 	request, session := m.stagedDiffRequest, m.sessionID
 	return func() tea.Msg {
-		cmd := exec.Command("git", "-C", repoPath, "diff", "--cached")
-		out, _ := cmd.Output()
-		return stagedDiffLoadedMsg{diff: string(out), session: session, path: repoPath, request: request}
+		diff, err := m.Git.GetStagedDiff(m.ctx, repoPath)
+		return stagedDiffLoadedMsg{diff: diff, err: err, session: session, path: repoPath, request: request}
 	}
 }
 
@@ -431,9 +363,8 @@ func (m *Model) refreshStash() tea.Cmd {
 	m.stashRequest++
 	request, session := m.stashRequest, m.sessionID
 	return func() tea.Msg {
-		ctx := context.Background()
-		out, _ := g.RunCommand(ctx, path, "stash", "list")
-		return stashInfoMsg{info: out, session: session, path: path, request: request}
+		stashes, err := g.GetStashes(m.ctx, path)
+		return stashInfoMsg{stashes: stashes, err: err, session: session, path: path, request: request}
 	}
 }
 
@@ -447,9 +378,8 @@ func (m *Model) refreshRepo() tea.Cmd {
 	m.verifyAfterRefresh = false
 	m.remoteErrorAfterRefresh = false
 	return func() tea.Msg {
-		ctx := context.Background()
-		updated, _ := g.GetRepoInfo(ctx, path)
-		return repoRefreshedMsg{repo: updated, verified: verified, remoteError: remoteError, verificationKnown: verified || remoteError, session: session, path: path, request: request}
+		updated, err := g.GetRepoInfo(m.ctx, path)
+		return repoRefreshedMsg{repo: updated, err: err, verified: verified, remoteError: remoteError, session: session, path: path, request: request}
 	}
 }
 
@@ -465,13 +395,6 @@ func (m *Model) selectedChange() (git.ChangeInfo, bool) {
 		return git.ChangeInfo{}, false
 	}
 	return m.changes[m.fileCursor], true
-}
-
-func (m *Model) execFinished(action string) func(error) tea.Msg {
-	session := m.sessionID
-	return func(err error) tea.Msg {
-		return execFinishedMsg{action: action, err: err, session: session}
-	}
 }
 
 // renderCommits formats commit log for the History tab viewport.

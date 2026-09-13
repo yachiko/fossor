@@ -69,6 +69,9 @@ type SwitchToManageMsg struct {
 // SwitchToMainMsg requests navigation back to the main screen.
 type SwitchToMainMsg struct{}
 
+// QuitMsg requests an application-level shutdown so active background work is canceled.
+type QuitMsg struct{}
+
 // StatusMsg sets a transient status message in the status bar.
 type StatusMsg struct {
 	Text      string

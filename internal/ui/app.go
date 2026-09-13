@@ -43,7 +43,10 @@ type App struct {
 	refreshTotal        int
 	refreshDone         int
 	spinner             spinner.Model
+	appCtx              context.Context
+	cancelApp           context.CancelFunc
 	cancelCtx           context.CancelFunc
+	cancelManage        context.CancelFunc
 	cancelled           bool
 	coordinator         *git.OperationCoordinator
 	manageSession       uint64
@@ -63,7 +66,8 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, o
 	s.Style = lipgloss.NewStyle().Foreground(common.ColorAccent)
 
 	coordinator := git.NewOperationCoordinator()
-	return &App{
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	a := &App{
 		git:                 g,
 		rootDir:             rootDir,
 		recursive:           recursive,
@@ -72,9 +76,13 @@ func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, o
 		openCmd:             openCmd,
 		coordinator:         coordinator,
 		mainScreen:          mainscreen.New(g, rootDir, openCmd, coordinator),
-		userUpdateDiscovery: make(map[string]uint64),
 		spinner:             s,
+		appCtx:              appCtx,
+		cancelApp:           cancelApp,
+		userUpdateDiscovery: make(map[string]uint64),
 	}
+	a.mainScreen.SetContext(appCtx)
+	return a
 }
 
 func (a *App) Init() tea.Cmd {
@@ -102,11 +110,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			a.cancelled = true
+			if a.cancelApp != nil {
+				a.cancelApp()
+			}
 			if a.cancelCtx != nil {
 				a.cancelCtx()
 			}
 			return a, tea.Quit
 		}
+
+	case common.QuitMsg:
+		a.cancelled = true
+		if a.cancelApp != nil {
+			a.cancelApp()
+		}
+		if a.cancelCtx != nil {
+			a.cancelCtx()
+		}
+		return a, tea.Quit
 
 	case spinner.TickMsg:
 		if a.discovering {
@@ -177,8 +198,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case common.SwitchToManageMsg:
+		if a.cancelManage != nil {
+			a.cancelManage()
+		}
 		a.manageSession++
+		manageCtx, cancelManage := context.WithCancel(a.appCtx)
+		a.cancelManage = cancelManage
 		fm := manageview.NewWithCoordinator(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified, a.coordinator, a.manageSession)
+		fm.SetContext(manageCtx, a.manageSession)
 		fm.SetSize(a.width, a.height)
 		a.manageModel = &fm
 		a.screen = screenManage
@@ -189,7 +216,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and no remote interaction is needed for the round-trip back.
 		var refreshCmd tea.Cmd
 		if a.manageModel != nil {
-			refreshCmd = mainscreen.RefreshRepoCmd(a.git, a.manageModel.Repo.Path, false)
+			refreshCmd = mainscreen.RefreshRepoCmd(a.git, a.manageModel.Repo.Path, false, a.appCtx)
+		}
+		if a.cancelManage != nil {
+			a.cancelManage()
+			a.cancelManage = nil
 		}
 		a.screen = screenMain
 		a.manageModel = nil
@@ -241,7 +272,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		refreshCmd := func() tea.Msg {
 			for _, r := range a.mainScreen.Repos {
 				if r.Path == path {
-					ctx := context.Background()
+					ctx := a.appCtx
 					updated, _ := g.GetRepoInfo(ctx, r.Path)
 					return common.RepoUpdatedMsg{Repo: updated, Source: common.RepoUpdateUserAction}
 				}
@@ -321,7 +352,7 @@ func (a *App) startDiscovery() tea.Cmd {
 	a.refreshTotal = 0
 	a.refreshDone = 0
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(a.appCtx)
 	a.cancelCtx = cancel
 	cachedRepos := make(map[string]git.RepoInfo)
 	for _, repo := range git.LoadDiscoveryCache(a.rootDir, a.recursive) {

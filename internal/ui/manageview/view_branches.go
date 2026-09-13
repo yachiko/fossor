@@ -48,7 +48,9 @@ func (m *Model) viewBranches() string {
 		tableHeight = 1
 	}
 
-	if !m.branchesLoaded {
+	if m.branchesErr != nil {
+		b.WriteString(errorStyle.Render("  "+m.branchesErr.Error()) + " (ctrl+r to retry)\n")
+	} else if !m.branchesLoaded {
 		b.WriteString(disabledStyle.Render("  loading...") + "\n")
 	} else if len(m.branches) == 0 {
 		b.WriteString(disabledStyle.Render("  (no branches)") + "\n")
@@ -84,17 +86,22 @@ func (m *Model) viewBranches() string {
 			}
 
 			aheadStr := ""
-			if br.Ahead > 0 {
+			behindStr := ""
+			if br.ComparisonError != nil {
+				aheadStr = disabledStyle.Render("?")
+				behindStr = disabledStyle.Render("?")
+			} else if br.Ahead > 0 {
 				aheadStr = lipgloss.NewStyle().Foreground(common.ColorGreen).Render(fmt.Sprintf("%d↑", br.Ahead))
 			}
 
-			behindStr := ""
-			if br.Behind > 0 {
+			if br.ComparisonError == nil && br.Behind > 0 {
 				behindStr = lipgloss.NewStyle().Foreground(common.ColorRed).Render(fmt.Sprintf("%d↓", br.Behind))
 			}
 
 			mergedStr := ""
-			if br.Merged && br.Name != m.Repo.DefaultBranch {
+			if br.MergedError != nil {
+				mergedStr = disabledStyle.Render("?")
+			} else if br.Merged && br.Name != m.Repo.DefaultBranch {
 				mergedStr = lipgloss.NewStyle().Foreground(common.ColorGreen).Render("✓")
 			}
 

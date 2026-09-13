@@ -19,6 +19,7 @@ var (
 	disabledStyle    = lipgloss.NewStyle().Foreground(common.ColorMuted)
 	catHeaderStyle   = lipgloss.NewStyle().Bold(true).Foreground(common.ColorAccent)
 	warnStyle        = lipgloss.NewStyle().Foreground(common.ColorRed).Bold(true)
+	errorStyle       = lipgloss.NewStyle().Foreground(common.ColorRed)
 )
 
 // Diff styles

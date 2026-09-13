@@ -21,6 +21,11 @@ type Git interface {
 	GetRemote(ctx context.Context, path string) (string, error)
 	GetAheadBehind(ctx context.Context, path, branch string) (int, int, error)
 	GetChanges(ctx context.Context, path string) ([]ChangeInfo, error)
+	GetFileDiff(ctx context.Context, path, filePath string, isSubmodule bool) (string, error)
+	GetStagedDiff(ctx context.Context, path string) (string, error)
+	GetStashes(ctx context.Context, path string) ([]StashInfo, error)
+	GetStashDiff(ctx context.Context, path, ref string) (string, error)
+	GetBranches(ctx context.Context, path, defaultBranch string) ([]BranchInfo, error)
 	GetLog(ctx context.Context, path string, n int) ([]CommitInfo, error)
 	Fetch(ctx context.Context, path string) error
 	Pull(ctx context.Context, path string) (string, error)
@@ -37,33 +42,51 @@ func NewExecGit() *ExecGit {
 	return &ExecGit{}
 }
 
+// Command constructs a Git process for interactive terminal handoff. Callers
+// use it with tea.ExecProcess when Git must own the terminal (for example an
+// editor or interactive rebase); background work should use the Git interface.
+func Command(path string, args ...string) *exec.Cmd {
+	return exec.Command("git", append([]string{"-C", path}, args...)...)
+}
+
 func (g *ExecGit) run(ctx context.Context, path string, args ...string) (string, error) {
-	out, err := runGitOnce(ctx, path, args...)
+	out, err := g.runRaw(ctx, path, args...)
 	if err == nil {
-		return out, nil
+		return strings.TrimSpace(out), nil
 	}
-	if !looksLikeLockError(err.Error()) {
-		return "", err
+	return "", err
+}
+
+// runRaw is run's counterpart for Git output whose whitespace is significant.
+func (g *ExecGit) runRaw(ctx context.Context, path string, args ...string) (string, error) {
+	out, err := runGitRawOnce(ctx, path, args...)
+	if err == nil || !looksLikeLockError(err.Error()) {
+		return out, err
 	}
-	cleared, _ := tryClearStaleLocks(path)
-	if len(cleared) == 0 {
-		return "", err
+	cleared, _ := tryClearStaleLocks(ctx, path)
+	if len(cleared) == 0 || ctx.Err() != nil {
+		return out, err
 	}
-	return runGitOnce(ctx, path, args...)
+	return runGitRawOnce(ctx, path, args...)
 }
 
 // IsWorktree validates both regular and linked worktrees and rejects
 // submodules, which are intentionally not independent Fossor repositories.
 func (g *ExecGit) IsWorktree(ctx context.Context, path string) bool {
-	inside, err := runGitOnce(ctx, path, "rev-parse", "--is-inside-work-tree")
+	inside, err := g.run(ctx, path, "rev-parse", "--is-inside-work-tree")
 	if err != nil || inside != "true" {
 		return false
 	}
-	superproject, err := runGitOnce(ctx, path, "rev-parse", "--show-superproject-working-tree")
+	superproject, err := g.run(ctx, path, "rev-parse", "--show-superproject-working-tree")
 	return err == nil && superproject == ""
 }
 
 func runGitOnce(ctx context.Context, path string, args ...string) (string, error) {
+	out, err := runGitRawOnce(ctx, path, args...)
+	return strings.TrimSpace(out), err
+}
+
+func runGitRawOnce(ctx context.Context, path string, args ...string) (string, error) {
 	allArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", allArgs...)
 
@@ -72,9 +95,9 @@ func runGitOnce(ctx context.Context, path string, args ...string) (string, error
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+		return stdout.String(), fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }
 
 // Sanitize strips C0 control characters and DEL (except tab) from a string
@@ -130,13 +153,16 @@ func looksLikeLockError(s string) bool {
 // staleLockThreshold and not held by any process per lsof, if available). It
 // returns the list of removed paths. Never removes a lock that could still be
 // held by a live process.
-func tryClearStaleLocks(repoPath string) ([]string, error) {
-	gitDir, err := runGitOnce(context.Background(), repoPath, "rev-parse", "--path-format=absolute", "--git-dir")
+func tryClearStaleLocks(ctx context.Context, repoPath string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	gitDir, err := runGitOnce(ctx, repoPath, "rev-parse", "--path-format=absolute", "--git-dir")
 	if err != nil {
 		return nil, err
 	}
 	gitDirs := []string{gitDir}
-	if commonDir, err := runGitOnce(context.Background(), repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && filepath.Clean(commonDir) != filepath.Clean(gitDir) {
+	if commonDir, err := runGitOnce(ctx, repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && filepath.Clean(commonDir) != filepath.Clean(gitDir) {
 		gitDirs = append(gitDirs, commonDir)
 	}
 	var candidates []string
@@ -156,6 +182,9 @@ func tryClearStaleLocks(repoPath string) ([]string, error) {
 
 	var cleared []string
 	for _, lock := range candidates {
+		if err := ctx.Err(); err != nil {
+			return cleared, err
+		}
 		info, err := os.Stat(lock)
 		if err != nil {
 			continue
@@ -163,7 +192,7 @@ func tryClearStaleLocks(repoPath string) ([]string, error) {
 		if time.Since(info.ModTime()) < staleLockThreshold {
 			continue
 		}
-		if lockHasHolder(lock) {
+		if lockHasHolder(ctx, lock) {
 			continue
 		}
 		age := time.Since(info.ModTime())
@@ -202,11 +231,11 @@ func debugLog(format string, args ...any) {
 // the lock file open. Returns true on positive identification of a holder,
 // false otherwise (including when lsof is missing or errors out — we only want
 // to *block* removal on confirmed live holders, not on tool absence).
-func lockHasHolder(lock string) bool {
+func lockHasHolder(ctx context.Context, lock string) bool {
 	if _, err := exec.LookPath("lsof"); err != nil {
 		return false
 	}
-	out, err := exec.Command("lsof", "-t", lock).Output()
+	out, err := exec.CommandContext(ctx, "lsof", "-t", lock).Output()
 	if err != nil {
 		return false
 	}
@@ -281,9 +310,8 @@ func (g *ExecGit) GetRemote(ctx context.Context, path string) (string, error) {
 
 func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int, int, error) {
 	upstream := "origin/" + branch
-	// `--` separator: branch may be repo-controlled (poisoned HEAD); without
-	// the separator a leading `-` turns the refspec into a git flag.
-	out, err := g.run(ctx, path, "rev-list", "--left-right", "--count", "--", branch+"..."+upstream)
+	// --end-of-options keeps a poisoned ref name from being parsed as a flag.
+	out, err := g.run(ctx, path, "rev-list", "--left-right", "--count", "--end-of-options", branch+"..."+upstream)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -306,23 +334,21 @@ func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int,
 }
 
 func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, error) {
-	// Run directly instead of via g.run() — porcelain output has significant
-	// leading spaces (e.g. " M file") that TrimSpace would destroy.
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain", "-uall")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
+	// Porcelain output has significant leading spaces (for example, " M file").
+	out, err := g.runRaw(ctx, path, "status", "--porcelain", "-uall")
+	if err != nil {
+		return nil, err
 	}
-
-	out := strings.TrimRight(stdout.String(), "\n\r ")
+	out = strings.TrimRight(out, "\n\r ")
 	if out == "" {
 		return nil, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Detect submodule paths from .gitmodules
-	submodulePaths := getSubmodulePaths(path)
+	submodulePaths := g.getSubmodulePaths(ctx, path)
 
 	var changes []ChangeInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -340,15 +366,115 @@ func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, er
 	return changes, nil
 }
 
+// GetFileDiff returns the working-tree diff for a changed path. Untracked
+// files are compared against /dev/null because ordinary git diff omits them.
+func (g *ExecGit) GetFileDiff(ctx context.Context, path, filePath string, isSubmodule bool) (string, error) {
+	if isSubmodule {
+		return g.runRaw(ctx, path, "diff", "--submodule=log", "HEAD", "--", filePath)
+	}
+	diff, err := g.runRaw(ctx, path, "diff", "HEAD", "--", filePath)
+	if err != nil {
+		return "", err
+	}
+	if diff != "" {
+		return diff, nil
+	}
+	// git diff --no-index exits with status 1 when it finds a difference.
+	diff, err = g.runRaw(ctx, path, "diff", "--no-index", "--", "/dev/null", filePath)
+	if err != nil && diff == "" {
+		return "", err
+	}
+	return diff, nil
+}
+
+func (g *ExecGit) GetStagedDiff(ctx context.Context, path string) (string, error) {
+	return g.runRaw(ctx, path, "diff", "--cached")
+}
+
+func (g *ExecGit) GetStashes(ctx context.Context, path string) ([]StashInfo, error) {
+	out, err := g.run(ctx, path, "stash", "list", "--format=%gd%x09%gs")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	stashes := make([]StashInfo, 0, strings.Count(out, "\n")+1)
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		stashes = append(stashes, StashInfo{Ref: Sanitize(parts[0]), Message: Sanitize(parts[1])})
+	}
+	return stashes, nil
+}
+
+func (g *ExecGit) GetStashDiff(ctx context.Context, path, ref string) (string, error) {
+	return g.runRaw(ctx, path, "stash", "show", "-p", "--", ref)
+}
+
+func (g *ExecGit) GetBranches(ctx context.Context, path, defaultBranch string) ([]BranchInfo, error) {
+	out, err := g.run(ctx, path, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)\t%(HEAD)\t%(committerdate:short)\t%(subject)", "refs/heads/")
+	if err != nil {
+		return nil, err
+	}
+
+	// The equals form keeps a poisoned ref name from being parsed as an option.
+	mergedOut, mergedErr := g.run(ctx, path, "branch", "--merged="+defaultBranch)
+	merged := make(map[string]bool)
+	if mergedErr == nil {
+		for _, line := range strings.Split(mergedOut, "\n") {
+			if name := strings.TrimSpace(strings.TrimPrefix(line, "*")); name != "" {
+				merged[name] = true
+			}
+		}
+	}
+
+	var branches []BranchInfo
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		branch := BranchInfo{
+			Name:        Sanitize(parts[0]),
+			IsCurrent:   parts[1] == "*",
+			Merged:      merged[parts[0]],
+			MergedError: mergedErr,
+			LastDate:    Sanitize(parts[2]),
+			LastMsg:     Sanitize(parts[3]),
+		}
+		if parts[0] != defaultBranch {
+			comparison, comparisonErr := g.run(ctx, path, "rev-list", "--left-right", "--count", "--end-of-options", defaultBranch+"..."+parts[0])
+			if comparisonErr != nil {
+				branch.ComparisonError = comparisonErr
+			} else if values := strings.Fields(comparison); len(values) == 2 {
+				branch.Behind, comparisonErr = strconv.Atoi(values[0])
+				if comparisonErr == nil {
+					branch.Ahead, comparisonErr = strconv.Atoi(values[1])
+				}
+				branch.ComparisonError = comparisonErr
+			} else {
+				branch.ComparisonError = fmt.Errorf("unexpected rev-list output: %q", comparison)
+			}
+		}
+		branches = append(branches, branch)
+	}
+	return branches, nil
+}
+
 // getSubmodulePaths reads .gitmodules and returns a set of submodule paths.
-func getSubmodulePaths(repoPath string) map[string]bool {
-	cmd := exec.Command("git", "-C", repoPath, "config", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$")
-	out, err := cmd.Output()
+func (g *ExecGit) getSubmodulePaths(ctx context.Context, repoPath string) map[string]bool {
+	out, err := g.run(ctx, repoPath, "config", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$")
 	if err != nil {
 		return nil
 	}
 	paths := make(map[string]bool)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		// Format: "submodule.<name>.path <value>"
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) == 2 {

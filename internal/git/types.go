@@ -79,3 +79,24 @@ type ChangeInfo struct {
 	Path        string
 	IsSubmodule bool
 }
+
+// StashInfo describes one entry in the stash reflog.
+type StashInfo struct {
+	Ref     string
+	Message string
+}
+
+// BranchInfo describes a local branch and its relationship to the default
+// branch. A comparison error makes only that comparison unavailable; the rest
+// of the branch list remains usable.
+type BranchInfo struct {
+	Name            string
+	IsCurrent       bool
+	Merged          bool
+	MergedError     error
+	LastDate        string
+	LastMsg         string
+	Ahead           int
+	Behind          int
+	ComparisonError error
+}
