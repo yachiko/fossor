@@ -334,12 +334,12 @@ func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int,
 }
 
 func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, error) {
-	// Porcelain output has significant leading spaces (for example, " M file").
-	out, err := g.runRaw(ctx, path, "status", "--porcelain", "-uall")
+	// NUL-delimited porcelain preserves arbitrary paths and emits rename entries
+	// as separate destination and source paths rather than a display string.
+	out, err := g.runRaw(ctx, path, "status", "--porcelain=v1", "-z", "-uall")
 	if err != nil {
 		return nil, err
 	}
-	out = strings.TrimRight(out, "\n\r ")
 	if out == "" {
 		return nil, nil
 	}
@@ -350,18 +350,25 @@ func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, er
 	// Detect submodule paths from .gitmodules
 	submodulePaths := g.getSubmodulePaths(ctx, path)
 
-	var changes []ChangeInfo
-	for _, line := range strings.Split(out, "\n") {
-		if len(line) < 3 {
+	entries := strings.Split(out, "\x00")
+	changes := make([]ChangeInfo, 0, len(entries))
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 3 {
 			continue
 		}
-		p := strings.TrimSpace(line[3:])
+		p := entry[3:]
 		changes = append(changes, ChangeInfo{
-			Staged:      line[0],
-			Unstaged:    line[1],
+			Staged:      entry[0],
+			Unstaged:    entry[1],
 			Path:        Sanitize(p),
 			IsSubmodule: submodulePaths[p],
 		})
+		if entry[0] == 'R' || entry[0] == 'C' {
+			// A rename/copy is followed by its source path, which is not a
+			// separate change entry.
+			i++
+		}
 	}
 	return changes, nil
 }
