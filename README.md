@@ -39,7 +39,7 @@ Fossor discovers git repos in a directory, shows their consolidated status (bran
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew install yachiko/tap/fossor
+brew install --cask yachiko/tap/fossor
 ```
 
 ### Using Go
