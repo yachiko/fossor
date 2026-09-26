@@ -20,6 +20,8 @@ type discoveryTestGit struct {
 	remoteDefault      string
 	remoteDefaultErr   error
 	remoteDefaultCalls int
+	refreshStatusCalls int
+	refreshErr         map[string]error
 }
 
 func (g *discoveryTestGit) GetRepoInfo(_ context.Context, path string) (RepoInfo, error) {
@@ -31,6 +33,13 @@ func (g *discoveryTestGit) GetRepoInfo(_ context.Context, path string) (RepoInfo
 		hook(path)
 	}
 	return RepoInfo{Name: filepath.Base(path), Path: path, Branch: "main", DefaultBranch: "main", Status: StatusUpToDate}, err
+}
+func (g *discoveryTestGit) RefreshStatus(_ context.Context, repo RepoInfo) (RepoInfo, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.refreshStatusCalls++
+	repo.Status = computeStatus(repo)
+	return repo, g.refreshErr[repo.Path]
 }
 func (g *discoveryTestGit) DetectDefaultBranch(context.Context, string) string { return "main" }
 func (g *discoveryTestGit) GetRemoteDefaultBranch(context.Context, string) (string, error) {
@@ -209,6 +218,20 @@ func TestFindReposStreamsCandidatesAndStopsEarly(t *testing.T) {
 	}
 	if len(seen) != 1 {
 		t.Fatalf("candidates after stop = %v, want exactly one", seen)
+	}
+}
+
+func TestRefreshRepoOnlyRereadsStatus(t *testing.T) {
+	infoCalls := 0
+	g := &discoveryTestGit{fetchErr: make(map[string]error), infoErr: make(map[string]error), remoteDefault: "main"}
+	g.infoHook = func(string) { infoCalls++ }
+	local := RepoInfo{Path: "/repo", Branch: "main", DefaultBranch: "main", CommonGitDir: "/repo/.git"}
+	result := refreshRepo(context.Background(), local, g, nil)
+	if infoCalls != 0 || g.refreshStatusCalls != 1 {
+		t.Errorf("GetRepoInfo calls = %d, RefreshStatus calls = %d; want 0 and 1", infoCalls, g.refreshStatusCalls)
+	}
+	if result.Repo.CommonGitDir != local.CommonGitDir || result.CoordinatorKey != local.CommonGitDir {
+		t.Errorf("result = %#v, want retained identity %s", result, local.CommonGitDir)
 	}
 }
 

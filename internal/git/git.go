@@ -16,6 +16,7 @@ import (
 // Git defines the interface for git operations.
 type Git interface {
 	GetRepoInfo(ctx context.Context, path string) (RepoInfo, error)
+	RefreshStatus(ctx context.Context, repo RepoInfo) (RepoInfo, error)
 	DetectDefaultBranch(ctx context.Context, path string) string
 	GetRemoteDefaultBranch(ctx context.Context, path string) (string, error)
 	GetBranch(ctx context.Context, path string) (string, error)
@@ -535,6 +536,26 @@ func (g *ExecGit) GetRepoInfo(ctx context.Context, path string) (RepoInfo, error
 	info.Changes = si.changes
 
 	info.DefaultBranch = g.detectDefaultBranch(ctx, path, identity.commonDir)
+	info.Status = computeStatus(info)
+	return info, nil
+}
+
+// RefreshStatus re-reads the branch, ahead/behind and change counts of a
+// repository already described by GetRepoInfo. Identity and default branch
+// cannot change through a fetch, so they are retained rather than re-resolved.
+func (g *ExecGit) RefreshStatus(ctx context.Context, repo RepoInfo) (RepoInfo, error) {
+	info := repo
+	info.Error = nil
+	si, err := g.getStatusInfo(ctx, repo.Path)
+	if err != nil {
+		info.Status = StatusError
+		info.Error = fmt.Errorf("get status: %w", err)
+		return info, nil
+	}
+	info.Branch = si.branch
+	info.Ahead = si.ahead
+	info.Behind = si.behind
+	info.Changes = si.changes
 	info.Status = computeStatus(info)
 	return info, nil
 }
