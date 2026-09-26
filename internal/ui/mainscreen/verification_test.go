@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/yachiko/fossor/internal/git"
 )
 
@@ -123,5 +126,63 @@ func TestCheckingRowShowsLiveStatusNotStale(t *testing.T) {
 	view := m.View()
 	if strings.Contains(view, "stale") || !strings.Contains(view, "Behind") {
 		t.Errorf("checking row should show its live status, got:\n%s", view)
+	}
+}
+
+func TestCheckingRowIsDimmedAsAWhole(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	m := New(nil, "", "")
+	m.SetSize(120, 20)
+	for _, repo := range []git.RepoInfo{
+		{Path: "/a", Name: "alpha", Branch: "main", DefaultBranch: "main", Status: git.StatusBehind, Behind: 1},
+		{Path: "/b", Name: "beta", Branch: "main", DefaultBranch: "main", Status: git.StatusBehind, Behind: 2},
+	} {
+		m.UpdateRepo(repo)
+		m.SetVerification(repo.Path, Checking)
+	}
+	// alpha is selected, beta is not; both must render every cell faint.
+	for _, name := range []string{"alpha", "beta"} {
+		var line string
+		for _, l := range strings.Split(m.View(), "\n") {
+			if strings.Contains(l, name) {
+				line = l
+			}
+		}
+		for _, cell := range []string{name, "Behind"} {
+			i := strings.Index(line, cell)
+			if i < 0 || !faintBefore(line[:i]) {
+				t.Errorf("%s row: %q is not faint in %q", name, cell, line)
+			}
+		}
+	}
+}
+
+// faintBefore reports whether the SGR state at the end of s includes faint.
+func faintBefore(s string) bool {
+	faint := false
+	for {
+		i := strings.Index(s, "\x1b[")
+		if i < 0 {
+			return faint
+		}
+		s = s[i+2:]
+		end := strings.IndexByte(s, 'm')
+		if end < 0 {
+			return faint
+		}
+		for _, param := range strings.Split(s[:end], ";") {
+			switch param {
+			case "0", "":
+				faint = false
+			case "2":
+				faint = true
+			case "22":
+				faint = false
+			}
+		}
+		s = s[end+1:]
 	}
 }
