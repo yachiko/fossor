@@ -157,7 +157,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Verified)
 				} else {
 					a.refreshTotal++
-					a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Unverified)
+					// Local status is fresh; only ahead/behind await the fetch.
+					a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.Checking)
 				}
 				a.updateManageVerification(msg.Repo.Path)
 			} else if !a.noFetch {
@@ -218,7 +219,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.manageSession++
 		manageCtx, cancelManage := context.WithCancel(a.appCtx)
 		a.cancelManage = cancelManage
-		fm := manageview.NewWithCoordinator(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path) == mainscreen.Verified, a.coordinator, a.manageSession)
+		fm := manageview.NewWithCoordinator(a.git, msg.Repo, a.mainScreen.Verification(msg.Repo.Path).Actionable(), a.coordinator, a.manageSession)
 		fm.SetContext(manageCtx, a.manageSession)
 		fm.SetSize(a.width, a.height)
 		a.manageModel = &fm
@@ -390,7 +391,7 @@ func (a *App) startDiscovery() tea.Cmd {
 
 func (a *App) updateManageVerification(path string) {
 	if a.manageModel != nil && a.manageModel.Repo.Path == path {
-		a.manageModel.SetVerified(a.mainScreen.Verification(path) == mainscreen.Verified)
+		a.manageModel.SetVerified(a.mainScreen.Verification(path).Actionable())
 	}
 }
 

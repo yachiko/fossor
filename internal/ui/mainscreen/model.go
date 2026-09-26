@@ -51,10 +51,20 @@ func (f FilterMode) String() string {
 type VerificationState int
 
 const (
+	// Unverified rows come from the discovery cache and have not been read yet.
 	Unverified VerificationState = iota
 	Verified
 	RemoteError
+	// Checking rows have fresh local status while their remote refresh runs;
+	// only ahead/behind may still change.
+	Checking
 )
+
+// Actionable reports whether local state is fresh enough to act on. Remote
+// operations bring their own fetch, so a pending refresh does not block them.
+func (s VerificationState) Actionable() bool {
+	return s == Verified || s == Checking
+}
 
 // Model is the main screen model.
 type Model struct {
@@ -196,7 +206,12 @@ func (m *Model) AddCachedRepo(repo git.RepoInfo) {
 }
 
 func (m *Model) SetVerification(path string, state VerificationState) {
+	previous, known := m.verification[path]
 	m.verification[path] = state
+	// Filter membership depends on verification; unfiltered rows are unaffected.
+	if (!known || previous != state) && (m.filterMode != FilterAll || m.searchText.Value() != "") {
+		m.refilter()
+	}
 }
 
 // Prune removes rows and verification metadata absent from a completed scan.
@@ -222,7 +237,7 @@ func (m *Model) Verification(path string) VerificationState {
 }
 
 func (m *Model) IsActionable(repo git.RepoInfo) bool {
-	return m.Verification(repo.Path) == Verified
+	return m.Verification(repo.Path).Actionable()
 }
 
 // SelectedRepo returns the currently selected repo, if any.
