@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -873,5 +874,38 @@ func TestPathBaseName(t *testing.T) {
 				t.Errorf("pathBaseName(%q) = %q, want %q", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBackgroundGitCannotPromptAndTimesOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("relies on a POSIX shell as the SSH command")
+	}
+	dir := setupTestRepo(t)
+	report := filepath.Join(t.TempDir(), "report")
+	// The fake SSH command records what a prompting program would see, then
+	// hangs with a child that inherits Git's output pipes.
+	t.Setenv("GIT_SSH_COMMAND", `sh -c 'echo "$GIT_TERMINAL_PROMPT" > "`+report+`"; (: > /dev/tty) 2>/dev/null && echo tty >> "`+report+`"; sleep 30' --`)
+	g := NewExecGit()
+	if _, err := g.RunCommand(context.Background(), dir, "remote", "add", "origin", "ssh://example.invalid/repo.git"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := g.Fetch(ctx, dir)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("err = %v, want a timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("fetch returned after %v; the hung SSH child kept it waiting", elapsed)
+	}
+	got, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != "0" {
+		t.Errorf("SSH saw %q, want GIT_TERMINAL_PROMPT=0 and no controlling terminal", got)
 	}
 }

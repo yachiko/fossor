@@ -77,15 +77,32 @@ func runGitOnce(ctx context.Context, path string, args ...string) (string, error
 	return strings.TrimSpace(out), err
 }
 
+// BackgroundRemoteTimeout bounds remote operations nobody explicitly asked
+// for, so an unresponsive remote cannot leave a refresh pending forever.
+// User-initiated fetch, pull and push are never cut short.
+const BackgroundRemoteTimeout = 2 * time.Minute
+
 func runGitRawOnce(ctx context.Context, path string, args ...string) (string, error) {
 	allArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", allArgs...)
+	// Fail rather than prompt for credentials underneath the TUI.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	detach(cmd)
+	// Do not wait indefinitely for descendants that inherited the output pipes.
+	cmd.WaitDelay = time.Second
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState.Success() {
+		err = nil
+	}
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return stdout.String(), fmt.Errorf("git %s timed out: %w", args[0], ctx.Err())
+		}
 		return stdout.String(), fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), err)
 	}
 	return stdout.String(), nil
@@ -279,6 +296,9 @@ var ErrNoRemoteHEAD = errors.New("remote HEAD symref not found")
 // GetRemoteDefaultBranch returns origin's advertised HEAD branch without
 // changing any local refs.
 func (g *ExecGit) GetRemoteDefaultBranch(ctx context.Context, path string) (string, error) {
+	// Only discovery queries this, so it is always background work.
+	ctx, cancel := context.WithTimeout(ctx, BackgroundRemoteTimeout)
+	defer cancel()
 	out, err := g.run(ctx, path, "ls-remote", "--symref", "origin", "HEAD")
 	if err != nil {
 		return "", err
@@ -339,7 +359,7 @@ func (g *ExecGit) GetAheadBehind(ctx context.Context, path, branch string) (int,
 func (g *ExecGit) GetChanges(ctx context.Context, path string) ([]ChangeInfo, error) {
 	// NUL-delimited porcelain preserves arbitrary paths and emits rename entries
 	// as separate destination and source paths rather than a display string.
-	out, err := g.runRaw(ctx, path, "status", "--porcelain=v1", "-z", "-uall")
+	out, err := g.runRaw(ctx, path, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall")
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +660,8 @@ func (g *ExecGit) getStatusInfo(ctx context.Context, path string) (struct {
 		changes int
 	}
 
-	out, err := g.run(ctx, path, "status", "--porcelain=v2", "--branch")
+	// Background status must not take index.lock away from the user's own Git.
+	out, err := g.run(ctx, path, "--no-optional-locks", "status", "--porcelain=v2", "--branch")
 	if err != nil {
 		return result{}, err
 	}

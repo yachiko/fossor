@@ -75,6 +75,9 @@ The Tea `Cmd` that wraps the channel is re-issued on every received message, so 
 - Fetch and pull operations sharing a resolved common Git directory are serialized by `OperationCoordinator`; local checkout operations remain independent.
 - Background refresh: a 30-second `tea.Tick` posts `RefreshTickMsg`; only the main screen acts on it, and only for the selected repo.
 - All `git` calls go through `exec.CommandContext` so they respect cancellation when the app shuts down.
+- Background `git` runs without a controlling terminal (its own session on Linux/macOS) and with `GIT_TERMINAL_PROMPT=0`, so credential and SSH passphrase prompts fail instead of drawing over the TUI; SSH agents and credential helpers still work. Interactive handoffs (`tea.ExecProcess`) keep the terminal.
+- Remote work nobody explicitly asked for — discovery fetches, auto-refresh fetches, the remote default-branch query — is bounded by a 2-minute timeout and then reported as a remote error. User-initiated fetch, pull and push are not time-limited.
+- Status reads use `--no-optional-locks`, so they never take `index.lock` from a Git command the user is running elsewhere.
 
 ## Stale Lock Recovery
 

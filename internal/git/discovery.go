@@ -180,13 +180,13 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 		var ran bool
 		key := local.CoordinatorKey()
 		revision, ran, fetchErr = coordinator.Run(ctx, key, false, func(ctx context.Context) error {
-			return g.Fetch(ctx, rp)
+			return BackgroundFetch(ctx, g, rp)
 		})
 		if !ran {
 			return DiscoveryResult{Path: rp, Skipped: true, Revision: revision, CoordinatorKey: key}
 		}
 	} else {
-		fetchErr = g.Fetch(ctx, rp)
+		fetchErr = BackgroundFetch(ctx, g, rp)
 	}
 	info, err := g.RefreshStatus(ctx, local)
 	if err != nil {
@@ -208,6 +208,14 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 		}
 	}
 	return DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision, CoordinatorKey: local.CoordinatorKey()}
+}
+
+// BackgroundFetch fetches on behalf of discovery or auto-refresh, bounded by
+// BackgroundRemoteTimeout. The timeout starts only once the fetch may run.
+func BackgroundFetch(ctx context.Context, g Git, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, BackgroundRemoteTimeout)
+	defer cancel()
+	return g.Fetch(ctx, path)
 }
 
 func sendDiscovery(ctx context.Context, ch chan<- DiscoveryResult, result DiscoveryResult) bool {
