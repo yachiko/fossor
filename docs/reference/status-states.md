@@ -16,8 +16,10 @@ The `Status` column on the main screen summarizes each repo into one of the stat
 | `Non-default` | Red     | Currently checked out to a branch that isn't the default. Overrides any other state.          |
 | `Error`       | Red     | Discovery failed (e.g. corrupted `.git`, permission denied). Inspect with `FOSSOR_DEBUG=1`.   |
 | `…` (dots)    | Muted   | Discovery is still in progress for this repo.                                                 |
-| `cached` / `checking` | Muted | A cached row is awaiting live discovery. Its saved status is retained but not counted or filterable. |
+| `stale`       | Muted   | A row restored from the discovery cache that has not been read yet (usually a fraction of a second). Not counted, filterable or actionable. |
 | `remote error` | Red | Local inspection worked but `git fetch` failed. Pull and fetch remain available; it is not counted or filterable. |
+
+While a repository's discovery fetch is still running, its row shows its live status with the **Ahead / Behind** numbers dimmed: local state (branch, changes, non-default) is current, and only those counts may change once the fetch lands. Such rows are counted, filterable and fully actionable, including in the manage view and bulk operations; pull, fetch and push perform their own network round-trip and take priority over the pending discovery fetch.
 
 ## Precedence
 

@@ -78,3 +78,50 @@ func TestRemoteErrorsMatchOnlyTheErrorFilter(t *testing.T) {
 		t.Errorf("status counts = %q, want one error", m.statusCountsView())
 	}
 }
+
+func TestCheckingRowsAreCountedFilterableAndActionable(t *testing.T) {
+	m := New(nil, "", "")
+	repo := git.RepoInfo{Path: "/checking", Status: git.StatusBehind, Behind: 2}
+	m.UpdateRepo(repo)
+	m.SetVerification(repo.Path, Checking)
+	if !m.IsActionable(repo) {
+		t.Error("checking repo is not actionable")
+	}
+	if !strings.Contains(m.statusCountsView(), "1 behind") {
+		t.Errorf("status counts = %q, want one behind", m.statusCountsView())
+	}
+	m.cycleFilter()
+	if m.filterMode != FilterBehind || !m.matchesFilter(repo) {
+		t.Errorf("filter = %v, want Behind matching the checking row", m.filterMode)
+	}
+	if cmd := m.pullAll(); cmd == nil {
+		t.Error("pull-all skipped the checking row")
+	}
+}
+
+func TestSetVerificationRefiltersActiveFilter(t *testing.T) {
+	m := New(nil, "", "")
+	repo := git.RepoInfo{Path: "/repo", Status: git.StatusBehind}
+	m.AddCachedRepo(repo)
+	m.filterMode = FilterBehind
+	m.refilter()
+	if len(m.visibleIndices()) != 0 {
+		t.Fatal("cached row matched the Behind filter")
+	}
+	m.SetVerification(repo.Path, Checking)
+	if len(m.visibleIndices()) != 1 {
+		t.Error("row did not appear under the active filter once checking")
+	}
+}
+
+func TestCheckingRowShowsLiveStatusNotStale(t *testing.T) {
+	m := New(nil, "", "")
+	m.SetSize(120, 20)
+	repo := git.RepoInfo{Path: "/repo", Name: "repo", Branch: "main", DefaultBranch: "main", Status: git.StatusBehind, Behind: 2}
+	m.UpdateRepo(repo)
+	m.SetVerification(repo.Path, Checking)
+	view := m.View()
+	if strings.Contains(view, "stale") || !strings.Contains(view, "Behind") {
+		t.Errorf("checking row should show its live status, got:\n%s", view)
+	}
+}
