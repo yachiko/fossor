@@ -40,6 +40,8 @@ type App struct {
 	liveRepos           map[string]git.RepoInfo
 	localRepos          map[string]git.RepoInfo
 	localDone           bool
+	cacheDirty          bool
+	cacheSavePending    bool
 	refreshTotal        int
 	refreshDone         int
 	spinner             spinner.Model
@@ -59,6 +61,11 @@ type App struct {
 
 // NewApp creates the root application model.
 const autoRefreshInterval = 30 * time.Second
+
+// cacheSaveDelay coalesces remote refresh results into one cache write.
+const cacheSaveDelay = time.Second
+
+type cacheSaveMsg struct{}
 
 func NewApp(g git.Git, rootDir string, recursive, noFetch, noAutoRefresh bool, openCmd string) *App {
 	s := spinner.New()
@@ -109,6 +116,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			a.flushCache()
 			a.cancelled = true
 			if a.cancelApp != nil {
 				a.cancelApp()
@@ -120,6 +128,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case common.QuitMsg:
+		a.flushCache()
 		a.cancelled = true
 		if a.cancelApp != nil {
 			a.cancelApp()
@@ -158,13 +167,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, waitForDiscovery(msg.Ch, msg.DiscoveryGeneration)
 		}
 		a.refreshDone++
+		var saveCmd tea.Cmd
 		// Discovery refreshes for sibling worktrees share one coordinator key.
 		// A later sibling fetch advances that key's revision but must not discard
 		// this checkout's completed status result.
 		if !msg.Skipped && !a.discoverySuperseded(msg.Repo.Path, msg.DiscoveryGeneration) {
 			a.liveRepos[msg.Repo.Path] = msg.Repo
 			a.localRepos[msg.Repo.Path] = msg.Repo
-			a.saveLocalRepos()
+			saveCmd = a.scheduleCacheSave()
 			a.mainScreen.UpdateRepo(msg.Repo)
 			if msg.FetchErr != nil {
 				a.mainScreen.SetVerification(msg.Repo.Path, mainscreen.RemoteError)
@@ -178,7 +188,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.mainScreen.SetStatus(a.scanStatus())
 		}
-		return a, waitForDiscovery(msg.Ch, msg.DiscoveryGeneration)
+		return a, tea.Batch(waitForDiscovery(msg.Ch, msg.DiscoveryGeneration), saveCmd)
+
+	case cacheSaveMsg:
+		a.cacheSavePending = false
+		return a, a.saveCacheCmd()
 
 	case common.DiscoveryCompleteMsg:
 		if msg.LocalDone && !a.cancelled {
@@ -186,7 +200,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !a.noFetch {
 				a.mainScreen.SetStatus(a.refreshStatus())
 			}
-			return a, waitForDiscovery(msg.Ch, msg.DiscoveryGeneration)
+			return a, tea.Batch(waitForDiscovery(msg.Ch, msg.DiscoveryGeneration), a.saveCacheCmd())
 		}
 		if msg.Complete {
 			if !a.localDone && !a.cancelled {
@@ -194,7 +208,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.discovering = false
 			a.mainScreen.SetStatus(fmt.Sprintf("Scan complete: %d repos", a.discovered))
-			return a, a.scheduleClearStatus()
+			return a, tea.Batch(a.scheduleClearStatus(), a.saveCacheCmd())
 		}
 
 	case common.SwitchToManageMsg:
@@ -349,6 +363,7 @@ func (a *App) startDiscovery() tea.Cmd {
 	a.liveRepos = make(map[string]git.RepoInfo)
 	a.localRepos = make(map[string]git.RepoInfo)
 	a.localDone = false
+	a.cacheDirty = false
 	a.refreshTotal = 0
 	a.refreshDone = 0
 
@@ -399,15 +414,45 @@ func (a *App) finishLocalScan() {
 		paths[path] = true
 	}
 	a.mainScreen.Prune(paths)
-	a.saveLocalRepos()
+	a.cacheDirty = true
 }
 
-func (a *App) saveLocalRepos() {
+// scheduleCacheSave marks the snapshot dirty and debounces its write. Before
+// LocalDone the snapshot is incomplete; finishLocalScan saves it instead.
+func (a *App) scheduleCacheSave() tea.Cmd {
+	a.cacheDirty = true
+	if !a.localDone || a.cacheSavePending {
+		return nil
+	}
+	a.cacheSavePending = true
+	return tea.Tick(cacheSaveDelay, func(time.Time) tea.Msg {
+		return cacheSaveMsg{}
+	})
+}
+
+// saveCacheCmd snapshots a dirty, complete local scan and writes it off the
+// Update goroutine.
+func (a *App) saveCacheCmd() tea.Cmd {
+	if !a.cacheDirty || !a.localDone {
+		return nil
+	}
+	a.cacheDirty = false
 	repos := make([]git.RepoInfo, 0, len(a.localRepos))
 	for _, repo := range a.localRepos {
 		repos = append(repos, repo)
 	}
-	git.SaveDiscoveryCache(a.rootDir, a.recursive, repos)
+	root, recursive, seq := a.rootDir, a.recursive, git.NextDiscoveryCacheSeq()
+	return func() tea.Msg {
+		git.SaveDiscoveryCache(root, recursive, seq, repos)
+		return nil
+	}
+}
+
+// flushCache writes pending refresh results synchronously before exit.
+func (a *App) flushCache() {
+	if cmd := a.saveCacheCmd(); cmd != nil {
+		cmd()
+	}
 }
 
 func (a *App) scheduleAutoRefresh() tea.Cmd {
