@@ -13,8 +13,8 @@ func TestDiscoveryCacheReplacesScopeAtomically(t *testing.T) {
 	t.Cleanup(func() { CacheDir = old })
 
 	root := filepath.Join(string(os.PathSeparator), "repos")
-	SaveDiscoveryCache(root, false, []RepoInfo{{Name: "one", Path: "/repos/one"}})
-	SaveDiscoveryCache(root, false, []RepoInfo{{Name: "two", Path: "/repos/two"}})
+	SaveDiscoveryCache(root, false, NextDiscoveryCacheSeq(), []RepoInfo{{Name: "one", Path: "/repos/one"}})
+	SaveDiscoveryCache(root, false, NextDiscoveryCacheSeq(), []RepoInfo{{Name: "two", Path: "/repos/two"}})
 	got := LoadDiscoveryCache(root, false)
 	if len(got) != 1 || got[0].Path != "/repos/two" {
 		t.Fatalf("LoadDiscoveryCache() = %#v, want replacement snapshot", got)
@@ -50,9 +50,30 @@ func TestDiscoveryCachePersistsDefaultBranchCheckTime(t *testing.T) {
 	t.Cleanup(func() { CacheDir = old })
 
 	checkedAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	SaveDiscoveryCache("/repos", false, []RepoInfo{{Path: "/repos/one", DefaultBranch: "develop", DefaultBranchCheckedAt: checkedAt}})
+	SaveDiscoveryCache("/repos", false, NextDiscoveryCacheSeq(), []RepoInfo{{Path: "/repos/one", DefaultBranch: "develop", DefaultBranchCheckedAt: checkedAt}})
 	got := LoadDiscoveryCache("/repos", false)
 	if len(got) != 1 || !got[0].DefaultBranchCheckedAt.Equal(checkedAt) {
 		t.Fatalf("LoadDiscoveryCache() = %#v, want check time %v", got, checkedAt)
+	}
+}
+
+func TestDiscoveryCacheDropsStaleSnapshot(t *testing.T) {
+	old := CacheDir
+	CacheDir = t.TempDir()
+	t.Cleanup(func() { CacheDir = old })
+
+	root := filepath.Join(string(os.PathSeparator), "repos")
+	older, newer := NextDiscoveryCacheSeq(), NextDiscoveryCacheSeq()
+	SaveDiscoveryCache(root, false, newer, []RepoInfo{{Name: "new", Path: "/repos/new"}})
+	SaveDiscoveryCache(root, false, older, []RepoInfo{{Name: "old", Path: "/repos/old"}})
+	got := LoadDiscoveryCache(root, false)
+	if len(got) != 1 || got[0].Path != "/repos/new" {
+		t.Fatalf("LoadDiscoveryCache() = %#v, want newer snapshot", got)
+	}
+
+	// Sequences are tracked per scope.
+	SaveDiscoveryCache(root, true, older, []RepoInfo{{Name: "old", Path: "/repos/old"}})
+	if got := LoadDiscoveryCache(root, true); len(got) != 1 {
+		t.Fatalf("recursive scope = %#v, want its own snapshot", got)
 	}
 }

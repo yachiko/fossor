@@ -4,12 +4,26 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 )
 
 const cacheVersion = 2
 
 // CacheDir is overrideable by tests. An empty value uses the user's cache dir.
 var CacheDir string
+
+var (
+	cacheMu   sync.Mutex
+	cacheSeq  atomic.Uint64
+	savedSeqs = make(map[cacheScope]uint64)
+)
+
+type cacheScope struct {
+	path      string
+	root      string
+	recursive bool
+}
 
 type discoveryCache struct {
 	Version int                   `json:"version"`
@@ -56,10 +70,24 @@ func LoadDiscoveryCache(root string, recursive bool) []RepoInfo {
 	return nil
 }
 
+// NextDiscoveryCacheSeq orders snapshots within this process. Take it when the
+// snapshot is built, not when it is written.
+func NextDiscoveryCacheSeq() uint64 {
+	return cacheSeq.Add(1)
+}
+
 // SaveDiscoveryCache atomically replaces the completed snapshot for this scope.
-func SaveDiscoveryCache(root string, recursive bool, repos []RepoInfo) {
+// seq comes from NextDiscoveryCacheSeq; a snapshot older than one this process
+// already wrote for the scope is dropped, so concurrent saves never regress.
+func SaveDiscoveryCache(root string, recursive bool, seq uint64, repos []RepoInfo) {
 	path, err := cachePath()
 	if err != nil {
+		return
+	}
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	scope := cacheScope{path: path, root: root, recursive: recursive}
+	if seq <= savedSeqs[scope] {
 		return
 	}
 	var cache discoveryCache
@@ -99,5 +127,7 @@ func SaveDiscoveryCache(root string, recursive bool, repos []RepoInfo) {
 	if _, err = tmp.Write(b); err != nil || tmp.Chmod(0600) != nil || tmp.Close() != nil {
 		return
 	}
-	_ = os.Rename(tmpName, path)
+	if os.Rename(tmpName, path) == nil {
+		savedSeqs[scope] = seq
+	}
 }
