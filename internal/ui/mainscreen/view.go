@@ -231,44 +231,40 @@ func (m *Model) View() string {
 		if tableRow.groupRoot {
 			marker = m.worktreeMarker(tableRow)
 		}
-		// Segments keep ahead/behind separately styleable while a remote
-		// refresh is pending; concatenated, they form the plain row.
-		var lead string
+		var rowNoStatus string
 		if m.hasWorktrees() {
-			lead = fmt.Sprintf("  %-*s %-*s %-*s ",
+			rowNoStatus = fmt.Sprintf("  %-*s %-*s %-*s %*s %*s %*s ",
 				colWorktree, marker,
 				colName, truncate(name, colName),
 				colBranch, truncate(git.Sanitize(repo.Branch), colBranch),
+				colAhead, aheadStr,
+				colBehind, behindStr,
+				colChanges, changesStr,
 			)
 		} else {
-			lead = fmt.Sprintf("  %-*s %-*s ",
+			rowNoStatus = fmt.Sprintf("  %-*s %-*s %*s %*s %*s ",
 				colName, truncate(name, colName),
 				colBranch, truncate(git.Sanitize(repo.Branch), colBranch),
+				colAhead, aheadStr,
+				colBehind, behindStr,
+				colChanges, changesStr,
 			)
 		}
-		aheadBehind := fmt.Sprintf("%*s %*s", colAhead, aheadStr, colBehind, behindStr)
-		changes := fmt.Sprintf(" %*s ", colChanges, changesStr)
-		status := fmt.Sprintf("%-*s", colStatus, statusStr)
-		row := lead + aheadBehind + changes + status
+		row := rowNoStatus + fmt.Sprintf("%-*s", colStatus, statusStr)
+		// A pending remote refresh dims the whole row but keeps its live status
+		// colour, which sets it apart from a muted, not-yet-read cached row.
 		pending := verification == Checking
-		selectedRest := m.width - lipgloss.Width(lead+aheadBehind)
 
 		if verification == Unverified {
 			b.WriteString(lipgloss.NewStyle().Foreground(common.ColorMuted).Width(m.width).Render(row))
 		} else if verification == RemoteError && vi == m.cursor {
 			b.WriteString(lipgloss.NewStyle().Background(common.ColorSurface).Foreground(common.ColorRed).Width(m.width).Render(row))
-		} else if vi == m.cursor && pending && selectedRest > 0 {
-			b.WriteString(selectedStyle.Render(lead) +
-				selectedStyle.Faint(true).Render(aheadBehind) +
-				selectedStyle.Width(selectedRest).Render(changes+status))
 		} else if vi == m.cursor {
-			b.WriteString(selectedStyle.Width(m.width).Render(row))
+			b.WriteString(selectedStyle.Faint(pending).Width(m.width).Render(row))
 		} else {
-			statusColored := lipgloss.NewStyle().Foreground(common.StatusColor(statusStr)).Render(statusStr)
-			if pending {
-				aheadBehind = lipgloss.NewStyle().Foreground(common.ColorMuted).Render(aheadBehind)
-			}
-			fullRow := lead + aheadBehind + changes + statusColored
+			plain := lipgloss.NewStyle().Faint(pending)
+			statusColored := plain.Foreground(common.StatusColor(statusStr)).Render(statusStr)
+			fullRow := plain.Render(rowNoStatus) + statusColored
 			padding := m.width - lipgloss.Width(fullRow)
 			if padding > 0 {
 				fullRow += strings.Repeat(" ", padding)

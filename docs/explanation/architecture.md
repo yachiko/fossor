@@ -87,7 +87,7 @@ Inside the `git` wrapper, every command is run through `runGitOnce`. On failure,
 
 Fossor has no configuration file. It stores the last complete, non-cancelled discovery snapshot in `~/.cache/fossor/repositories.json`, keyed by absolute root and recursive mode. The versioned JSON file is private and atomically replaced. Read and write failures are ignored, so the cache never prevents startup or discovery.
 
-Cached rows are hydrated synchronously as stale and become checking as soon as their local status is read: fully actionable, with only ahead/behind marked pending until the remote refresh lands. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents include resolved common-Git-dir identity so linked worktrees can be grouped immediately, and the time the default branch was last confirmed against the remote; remote state is always refreshed by the live scan unless `--no-fetch` is used.
+Cached rows are hydrated synchronously as stale and become checking as soon as their local status is read: fully actionable, and dimmed until the remote refresh lands. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents include resolved common-Git-dir identity so linked worktrees can be grouped immediately, and the time the default branch was last confirmed against the remote; remote state is always refreshed by the live scan unless `--no-fetch` is used.
 
 ## See Also
 
