@@ -8,6 +8,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/yachiko/fossor/internal/git"
+	"github.com/yachiko/fossor/internal/ui/uitest"
 )
 
 func TestUnverifiedRowsExcludedFromCountsAndBulkEligibility(t *testing.T) {
@@ -152,37 +153,9 @@ func TestCheckingRowIsDimmedAsAWhole(t *testing.T) {
 			}
 		}
 		for _, cell := range []string{name, "Behind"} {
-			i := strings.Index(line, cell)
-			if i < 0 || !faintBefore(line[:i]) {
+			if !uitest.FaintAt(line, cell) {
 				t.Errorf("%s row: %q is not faint in %q", name, cell, line)
 			}
 		}
-	}
-}
-
-// faintBefore reports whether the SGR state at the end of s includes faint.
-func faintBefore(s string) bool {
-	faint := false
-	for {
-		i := strings.Index(s, "\x1b[")
-		if i < 0 {
-			return faint
-		}
-		s = s[i+2:]
-		end := strings.IndexByte(s, 'm')
-		if end < 0 {
-			return faint
-		}
-		for _, param := range strings.Split(s[:end], ";") {
-			switch param {
-			case "0", "":
-				faint = false
-			case "2":
-				faint = true
-			case "22":
-				faint = false
-			}
-		}
-		s = s[end+1:]
 	}
 }
