@@ -182,14 +182,10 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 	} else {
 		fetchErr = g.Fetch(ctx, rp)
 	}
-	info, err := g.GetRepoInfo(ctx, rp)
+	info, err := g.RefreshStatus(ctx, local)
 	if err != nil {
 		info = local
 		fetchErr = errors.Join(fetchErr, err)
-	}
-	if local.DefaultBranch != "" {
-		info.DefaultBranch = local.DefaultBranch
-		info.Status = computeStatus(info)
 	}
 	if fetchErr == nil {
 		if branch, err := g.GetRemoteDefaultBranch(ctx, rp); err == nil && branch != "" {

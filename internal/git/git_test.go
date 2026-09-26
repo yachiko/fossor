@@ -74,6 +74,46 @@ func TestDetectDefaultBranchFallbackUsesOneRefQuery(t *testing.T) {
 	}
 }
 
+func TestRefreshStatusRereadsCountsAndRetainsIdentity(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	clone := filepath.Join(root, "clone")
+	other := filepath.Join(root, "other")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=test@test.com", "-c", "user.name=Test"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	run(root, "init", "--bare", "--initial-branch=main", bare)
+	run(root, "clone", bare, clone)
+	run(clone, "commit", "--allow-empty", "-m", "initial")
+	run(clone, "push", "origin", "main")
+	run(root, "clone", bare, other)
+	run(other, "commit", "--allow-empty", "-m", "upstream")
+	run(other, "push", "origin", "main")
+
+	g := NewExecGit()
+	ctx := context.Background()
+	before, err := g.GetRepoInfo(ctx, clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before.DefaultBranch = "develop" // a remote-verified value must survive
+	if err := g.Fetch(ctx, clone); err != nil {
+		t.Fatal(err)
+	}
+	after, err := g.RefreshStatus(ctx, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Behind != 1 || after.CommonGitDir != before.CommonGitDir || after.DefaultBranch != "develop" || after.Status != StatusNonDefault {
+		t.Errorf("refreshed = %#v, want behind 1 with retained identity and default branch", after)
+	}
+}
+
 func TestGetRepoInfoRejectsSubmodules(t *testing.T) {
 	source := setupTestRepo(t)
 	super := setupTestRepo(t)
