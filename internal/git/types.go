@@ -52,6 +52,9 @@ type RepoInfo struct {
 	// CommonGitDir identifies all checkouts that share refs and remotes.
 	CommonGitDir   string
 	LinkedWorktree bool
+	// DefaultBranchCheckedAt records when DefaultBranch was last confirmed
+	// against the remote, so discovery can skip the network query while fresh.
+	DefaultBranchCheckedAt time.Time
 }
 
 // CoordinatorKey identifies the shared git state that remote operations must

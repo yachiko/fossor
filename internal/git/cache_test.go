@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDiscoveryCacheReplacesScopeAtomically(t *testing.T) {
@@ -40,5 +41,18 @@ func TestDiscoveryCacheIgnoresInvalidData(t *testing.T) {
 	}
 	if got := LoadDiscoveryCache("/repos", false); got != nil {
 		t.Fatalf("LoadDiscoveryCache() = %#v, want nil", got)
+	}
+}
+
+func TestDiscoveryCachePersistsDefaultBranchCheckTime(t *testing.T) {
+	old := CacheDir
+	CacheDir = t.TempDir()
+	t.Cleanup(func() { CacheDir = old })
+
+	checkedAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	SaveDiscoveryCache("/repos", false, []RepoInfo{{Path: "/repos/one", DefaultBranch: "develop", DefaultBranchCheckedAt: checkedAt}})
+	got := LoadDiscoveryCache("/repos", false)
+	if len(got) != 1 || !got[0].DefaultBranchCheckedAt.Equal(checkedAt) {
+		t.Fatalf("LoadDiscoveryCache() = %#v, want check time %v", got, checkedAt)
 	}
 }

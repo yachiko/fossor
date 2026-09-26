@@ -6,11 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const (
 	localStatusWorkers = 8
 	fetchWorkers       = 16
+	// remoteDefaultBranchTTL bounds how often discovery spends a second network
+	// round-trip confirming a default branch, which rarely changes.
+	remoteDefaultBranchTTL = 24 * time.Hour
 )
 
 // DiscoveryResult carries a discovered repo or indicates completion.
@@ -59,6 +63,7 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 					}
 					if cached, ok := opts.CachedRepos[path]; ok && cached.DefaultBranch != "" {
 						info.DefaultBranch = cached.DefaultBranch
+						info.DefaultBranchCheckedAt = cached.DefaultBranchCheckedAt
 						info.Status = computeStatus(info)
 					}
 					if !sendDiscovery(ctx, ch, DiscoveryResult{Repo: info, Path: path, Local: true}) {
@@ -187,10 +192,16 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 		info = local
 		fetchErr = errors.Join(fetchErr, err)
 	}
-	if fetchErr == nil {
-		if branch, err := g.GetRemoteDefaultBranch(ctx, rp); err == nil && branch != "" {
+	if fetchErr == nil && time.Since(local.DefaultBranchCheckedAt) >= remoteDefaultBranchTTL {
+		branch, err := g.GetRemoteDefaultBranch(ctx, rp)
+		switch {
+		case err == nil && branch != "":
 			info.DefaultBranch = branch
+			info.DefaultBranchCheckedAt = time.Now()
 			info.Status = computeStatus(info)
+		case errors.Is(err, ErrNoRemoteHEAD):
+			// The remote answered without a HEAD; keep local detection until the TTL.
+			info.DefaultBranchCheckedAt = time.Now()
 		}
 	}
 	return DiscoveryResult{Repo: info, FetchErr: fetchErr, Path: rp, Revision: revision, CoordinatorKey: local.CoordinatorKey()}

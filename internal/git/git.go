@@ -273,6 +273,9 @@ func (g *ExecGit) detectDefaultBranch(ctx context.Context, path, commonDir strin
 	return "main"
 }
 
+// ErrNoRemoteHEAD reports a remote that answered but advertises no HEAD symref.
+var ErrNoRemoteHEAD = errors.New("remote HEAD symref not found")
+
 // GetRemoteDefaultBranch returns origin's advertised HEAD branch without
 // changing any local refs.
 func (g *ExecGit) GetRemoteDefaultBranch(ctx context.Context, path string) (string, error) {
@@ -289,7 +292,7 @@ func (g *ExecGit) GetRemoteDefaultBranch(ctx context.Context, path string) (stri
 			}
 		}
 	}
-	return "", fmt.Errorf("remote HEAD symref not found")
+	return "", ErrNoRemoteHEAD
 }
 
 func (g *ExecGit) GetBranch(ctx context.Context, path string) (string, error) {
