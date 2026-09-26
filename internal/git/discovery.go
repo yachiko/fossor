@@ -61,7 +61,8 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 					if err != nil {
 						continue
 					}
-					if cached, ok := opts.CachedRepos[path]; ok && cached.DefaultBranch != "" {
+					// computeStatus ignores Error, so an error row keeps its status.
+					if cached, ok := opts.CachedRepos[path]; ok && cached.DefaultBranch != "" && info.Error == nil {
 						info.DefaultBranch = cached.DefaultBranch
 						info.DefaultBranchCheckedAt = cached.DefaultBranchCheckedAt
 						info.Status = computeStatus(info)
@@ -198,7 +199,9 @@ func refreshRepo(ctx context.Context, local RepoInfo, g Git, coordinator *Operat
 		case err == nil && branch != "":
 			info.DefaultBranch = branch
 			info.DefaultBranchCheckedAt = time.Now()
-			info.Status = computeStatus(info)
+			if info.Error == nil {
+				info.Status = computeStatus(info)
+			}
 		case errors.Is(err, ErrNoRemoteHEAD):
 			// The remote answered without a HEAD; keep local detection until the TTL.
 			info.DefaultBranchCheckedAt = time.Now()

@@ -22,6 +22,7 @@ type discoveryTestGit struct {
 	remoteDefaultCalls int
 	refreshStatusCalls int
 	refreshErr         map[string]error
+	statusErr          map[string]error
 }
 
 func (g *discoveryTestGit) GetRepoInfo(_ context.Context, path string) (RepoInfo, error) {
@@ -31,6 +32,9 @@ func (g *discoveryTestGit) GetRepoInfo(_ context.Context, path string) (RepoInfo
 	g.mu.Unlock()
 	if hook != nil {
 		hook(path)
+	}
+	if statusErr := g.statusErr[path]; statusErr != nil {
+		return RepoInfo{Name: filepath.Base(path), Path: path, Status: StatusError, Error: statusErr}, err
 	}
 	return RepoInfo{Name: filepath.Base(path), Path: path, Branch: "main", DefaultBranch: "main", Status: StatusUpToDate}, err
 }
@@ -185,6 +189,24 @@ func TestDiscoverNoFetchUsesCachedDefaultBranch(t *testing.T) {
 	}
 	if g.remoteDefaultCalls != 0 {
 		t.Errorf("remote default queries = %d, want none", g.remoteDefaultCalls)
+	}
+}
+
+func TestDiscoverKeepsErrorStatusWithCachedDefaultBranch(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(path, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	g := &discoveryTestGit{statusErr: map[string]error{path: errors.New("broken index")}}
+	for result := range Discover(context.Background(), DiscoveryOptions{
+		RootDir:     root,
+		Git:         g,
+		CachedRepos: map[string]RepoInfo{path: {Path: path, DefaultBranch: "develop"}},
+	}) {
+		if result.Local && result.Repo.Status != StatusError {
+			t.Errorf("status = %v, want Error retained", result.Repo.Status)
+		}
 	}
 }
 
