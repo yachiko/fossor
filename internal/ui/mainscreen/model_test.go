@@ -150,3 +150,76 @@ func TestSearchMatchesWorktreePath(t *testing.T) {
 		t.Fatalf("path search rows = %v, want checkout", got)
 	}
 }
+
+func selectedPath(t *testing.T, m *Model) string {
+	t.Helper()
+	repo, ok := m.SelectedRepo()
+	if !ok {
+		t.Fatalf("no repo selected at cursor %d", m.cursor)
+	}
+	return repo.Path
+}
+
+func TestSelectionFollowsRepoInsertedAbove(t *testing.T) {
+	m := New(nil, "", "")
+	m.SetSize(80, 11) // three table rows
+	for _, name := range []string{"b", "c", "d"} {
+		m.UpdateRepo(git.RepoInfo{Name: name, Path: "/repos/" + name})
+	}
+	m.cursor = 2
+	m.UpdateRepo(git.RepoInfo{Name: "a", Path: "/repos/a"})
+	if got := selectedPath(t, &m); got != "/repos/d" {
+		t.Fatalf("selected %q, want /repos/d", got)
+	}
+	if m.cursor != 3 || m.scrollOffset != 1 {
+		t.Fatalf("cursor/scroll = %d/%d, want 3/1 so d keeps its screen line", m.cursor, m.scrollOffset)
+	}
+}
+
+func TestSelectionFollowsRepoResortedByStatus(t *testing.T) {
+	m := New(nil, "", "")
+	m.sortCol = SortStatus
+	m.UpdateRepo(git.RepoInfo{Name: "a", Path: "/repos/a", Status: git.StatusUpToDate})
+	m.UpdateRepo(git.RepoInfo{Name: "b", Path: "/repos/b", Status: git.StatusAhead})
+	m.UpdateRepo(git.RepoInfo{Name: "c", Path: "/repos/c", Status: git.StatusBehind})
+	m.cursor = 0
+	m.UpdateRepo(git.RepoInfo{Name: "a", Path: "/repos/a", Status: git.StatusDirty})
+	if got := selectedPath(t, &m); got != "/repos/a" {
+		t.Fatalf("selected %q, want /repos/a", got)
+	}
+	if m.cursor != 2 {
+		t.Fatalf("cursor = %d, want 2", m.cursor)
+	}
+}
+
+func TestSelectionFallsBackWhenFilteredOut(t *testing.T) {
+	m := New(nil, "", "")
+	for _, name := range []string{"keep1", "keep2", "other"} {
+		m.UpdateRepo(git.RepoInfo{Name: name, Path: "/repos/" + name})
+	}
+	m.cursor = 2
+	m.searchText.SetValue("keep")
+	m.refilter()
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want clamped to 1", m.cursor)
+	}
+	if got := selectedPath(t, &m); got != "/repos/keep2" {
+		t.Fatalf("selected %q, want /repos/keep2", got)
+	}
+}
+
+func TestSelectionFollowsWorktreeHeader(t *testing.T) {
+	m := New(nil, "", "")
+	m.UpdateRepo(git.RepoInfo{Name: "feat-a", Path: "/repos/feat-a", CommonGitDir: "/repos/x/.git", LinkedWorktree: true})
+	m.UpdateRepo(git.RepoInfo{Name: "feat-b", Path: "/repos/feat-b", CommonGitDir: "/repos/x/.git", LinkedWorktree: true})
+	m.UpdateRepo(git.RepoInfo{Name: "zed", Path: "/repos/zed"})
+	m.cursor = 0
+	if rows := m.visibleRows(); rows[m.cursor].repoIndex >= 0 {
+		t.Fatalf("cursor row = %#v, want worktree header", rows[m.cursor])
+	}
+	m.UpdateRepo(git.RepoInfo{Name: "alpha", Path: "/repos/alpha"})
+	rows := m.visibleRows()
+	if m.cursor != 1 || rows[m.cursor].repoIndex >= 0 || rows[m.cursor].groupKey != "/repos/x/.git" {
+		t.Fatalf("cursor = %d row = %#v, want header at 1", m.cursor, rows[m.cursor])
+	}
+}

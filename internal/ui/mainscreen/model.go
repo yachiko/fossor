@@ -87,6 +87,21 @@ type tableRow struct {
 	groupRoot bool
 }
 
+// rowID identifies a table row across rebuilds: checkouts by path, root-less
+// worktree headers by group key.
+type rowID struct {
+	path  string
+	group string
+}
+
+// selection pins the cursor to a row identity while rows are re-sorted or
+// re-filtered underneath it.
+type selection struct {
+	id     rowID
+	offset int // cursor position within the viewport
+	ok     bool
+}
+
 // New creates a new main screen model.
 func New(g git.Git, rootDir, openCmd string, coordinators ...*git.OperationCoordinator) Model {
 	ti := textinput.New()
@@ -159,15 +174,19 @@ func (m *Model) clampScroll() {
 
 // UpdateRepo updates or inserts a repo in the list.
 func (m *Model) UpdateRepo(repo git.RepoInfo) {
+	sel := m.captureSelection()
+	found := false
 	for i, r := range m.Repos {
 		if r.Path == repo.Path {
 			m.Repos[i] = repo
-			m.refilter()
-			return
+			found = true
+			break
 		}
 	}
-	m.Repos = append(m.Repos, repo)
-	m.refilter()
+	if !found {
+		m.Repos = append(m.Repos, repo)
+	}
+	m.rebuild(sel)
 }
 
 // AddCachedRepo hydrates a persisted row without treating it as live state.
@@ -182,6 +201,7 @@ func (m *Model) SetVerification(path string, state VerificationState) {
 
 // Prune removes rows and verification metadata absent from a completed scan.
 func (m *Model) Prune(paths map[string]bool) {
+	sel := m.captureSelection()
 	kept := m.Repos[:0]
 	for _, repo := range m.Repos {
 		if paths[repo.Path] {
@@ -191,8 +211,7 @@ func (m *Model) Prune(paths map[string]bool) {
 		}
 	}
 	m.Repos = kept
-	m.refilter()
-	m.clampCursor()
+	m.rebuild(sel)
 }
 
 func (m *Model) Verification(path string) VerificationState {
@@ -279,14 +298,55 @@ func (m *Model) visibleRows() []tableRow {
 	return rows
 }
 
+func (m *Model) rowID(row tableRow) rowID {
+	if row.repoIndex < 0 {
+		return rowID{group: row.groupKey}
+	}
+	return rowID{path: m.Repos[row.repoIndex].Path}
+}
+
+// captureSelection must run before Repos, filtered or collapsed change, while
+// visibleRows still describes what the user is looking at.
+func (m *Model) captureSelection() selection {
+	rows := m.visibleRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return selection{}
+	}
+	return selection{id: m.rowID(rows[m.cursor]), offset: m.cursor - m.scrollOffset, ok: true}
+}
+
+// restoreSelection moves the cursor back onto the captured row, keeping its
+// screen line where possible; a vanished row falls back to index clamping.
+func (m *Model) restoreSelection(sel selection) {
+	if sel.ok {
+		rows := m.visibleRows()
+		for i, row := range rows {
+			if m.rowID(row) != sel.id {
+				continue
+			}
+			m.cursor = i
+			m.scrollOffset = min(i-sel.offset, len(rows)-m.TableHeight())
+			m.clampScroll()
+			return
+		}
+	}
+	m.clampCursor()
+}
+
+// refilter rebuilds rows after a sort, search or filter change.
 func (m *Model) refilter() {
+	m.rebuild(m.captureSelection())
+}
+
+// rebuild re-sorts and re-filters Repos, then restores sel.
+func (m *Model) rebuild(sel selection) {
 	m.sortRepos()
+	defer m.restoreSelection(sel)
 
 	query := strings.ToLower(m.searchText.Value())
 
 	if query == "" && m.filterMode == FilterAll {
 		m.filtered = nil
-		m.clampCursor()
 		return
 	}
 
@@ -308,7 +368,6 @@ func (m *Model) refilter() {
 		}
 		m.filtered = append(m.filtered, i)
 	}
-	m.clampCursor()
 }
 
 func (m *Model) matchesFilter(r git.RepoInfo) bool {
