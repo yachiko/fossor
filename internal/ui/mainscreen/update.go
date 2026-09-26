@@ -432,10 +432,10 @@ func (m *Model) RefreshSelected(g git.Git) tea.Cmd {
 		ctx := m.operationContext()
 		if m.Coordinator != nil {
 			_, _, _ = m.Coordinator.Run(ctx, repo.CoordinatorKey(), false, func(ctx context.Context) error {
-				return g.Fetch(ctx, repo.Path)
+				return git.BackgroundFetch(ctx, g, repo.Path)
 			})
 		} else {
-			_ = g.Fetch(ctx, repo.Path)
+			_ = git.BackgroundFetch(ctx, g, repo.Path)
 		}
 		info, err := g.GetRepoInfo(ctx, repo.Path)
 		if err == nil {
