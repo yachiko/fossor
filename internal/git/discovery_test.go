@@ -169,18 +169,19 @@ func TestDiscoverNoFetchUsesCachedDefaultBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := &discoveryTestGit{fetchErr: make(map[string]error), infoErr: make(map[string]error)}
+	checkedAt := time.Now().Add(-time.Hour)
 	results := []DiscoveryResult{}
 	for result := range Discover(context.Background(), DiscoveryOptions{
 		RootDir: root,
 		Git:     g,
 		CachedRepos: map[string]RepoInfo{
-			path: {Path: path, DefaultBranch: "develop"},
+			path: {Path: path, DefaultBranch: "develop", DefaultBranchCheckedAt: checkedAt},
 		},
 	}) {
 		results = append(results, result)
 	}
-	if got := results[0].Repo; got.DefaultBranch != "develop" || got.Status != StatusNonDefault {
-		t.Errorf("local repo = %#v, want cached default branch develop and non-default status", got)
+	if got := results[0].Repo; got.DefaultBranch != "develop" || got.Status != StatusNonDefault || !got.DefaultBranchCheckedAt.Equal(checkedAt) {
+		t.Errorf("local repo = %#v, want cached default branch develop, its check time and non-default status", got)
 	}
 	if g.remoteDefaultCalls != 0 {
 		t.Errorf("remote default queries = %d, want none", g.remoteDefaultCalls)
@@ -250,6 +251,35 @@ func TestRefreshRepoUsesRemoteDefaultBranch(t *testing.T) {
 	}
 	if g.remoteDefaultCalls != 1 {
 		t.Errorf("remote default queries = %d, want 1", g.remoteDefaultCalls)
+	}
+	if result.Repo.DefaultBranchCheckedAt.IsZero() {
+		t.Error("confirmed default branch has no check time")
+	}
+}
+
+func TestRefreshRepoSkipsRecentRemoteDefaultCheck(t *testing.T) {
+	g := &discoveryTestGit{fetchErr: make(map[string]error), infoErr: make(map[string]error), remoteDefault: "develop"}
+	checkedAt := time.Now().Add(-time.Hour)
+	local := RepoInfo{Path: "/repo", Branch: "main", DefaultBranch: "main", DefaultBranchCheckedAt: checkedAt}
+	result := refreshRepo(context.Background(), local, g, nil)
+	if g.remoteDefaultCalls != 0 {
+		t.Errorf("remote default queries = %d, want none within TTL", g.remoteDefaultCalls)
+	}
+	if result.Repo.DefaultBranch != "main" || !result.Repo.DefaultBranchCheckedAt.Equal(checkedAt) {
+		t.Errorf("repo = %#v, want cached default and check time retained", result.Repo)
+	}
+
+	local.DefaultBranchCheckedAt = time.Now().Add(-remoteDefaultBranchTTL - time.Minute)
+	if result := refreshRepo(context.Background(), local, g, nil); result.Repo.DefaultBranch != "develop" || g.remoteDefaultCalls != 1 {
+		t.Errorf("expired check: repo = %#v, queries = %d; want develop after one query", result.Repo, g.remoteDefaultCalls)
+	}
+}
+
+func TestRefreshRepoRecordsRemoteWithoutHEAD(t *testing.T) {
+	g := &discoveryTestGit{fetchErr: make(map[string]error), infoErr: make(map[string]error), remoteDefaultErr: ErrNoRemoteHEAD}
+	result := refreshRepo(context.Background(), RepoInfo{Path: "/repo", Branch: "main", DefaultBranch: "main"}, g, nil)
+	if result.Repo.DefaultBranch != "main" || result.Repo.DefaultBranchCheckedAt.IsZero() {
+		t.Errorf("repo = %#v, want local default kept and the check recorded", result.Repo)
 	}
 }
 
