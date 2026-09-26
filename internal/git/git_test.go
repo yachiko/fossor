@@ -114,6 +114,54 @@ func TestRefreshStatusRereadsCountsAndRetainsIdentity(t *testing.T) {
 	}
 }
 
+func TestResolveIdentityLegacyMatchesPathFormat(t *testing.T) {
+	primary := setupTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "linked")
+	g := NewExecGit()
+	ctx := context.Background()
+	if _, err := g.RunCommand(ctx, primary, "worktree", "add", "-b", "feature", linked); err != nil {
+		t.Fatal(err)
+	}
+	// A symlinked path exercises canonicalization of the relative common dir.
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(primary, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{primary, alias, linked} {
+		want, err := g.resolveIdentity(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := g.resolveIdentityLegacy(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Clean(got.gitDir) != filepath.Clean(want.gitDir) || filepath.Clean(got.commonDir) != filepath.Clean(want.commonDir) {
+			t.Errorf("%s: legacy identity = %#v, want %#v", path, got, want)
+		}
+	}
+}
+
+func TestGetRepoInfoRejectsUnrecognizedGitDirs(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty")
+	dangling := filepath.Join(root, "dangling")
+	if err := os.MkdirAll(filepath.Join(empty, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dangling, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dangling, ".git"), []byte("gitdir: "+filepath.Join(root, "missing")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{empty, dangling} {
+		if _, err := NewExecGit().GetRepoInfo(context.Background(), path); !errors.Is(err, ErrNotWorktree) {
+			t.Errorf("%s: err = %v, want ErrNotWorktree", path, err)
+		}
+	}
+}
+
 func TestGetRepoInfoRejectsSubmodules(t *testing.T) {
 	source := setupTestRepo(t)
 	super := setupTestRepo(t)

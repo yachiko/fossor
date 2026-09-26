@@ -569,20 +569,57 @@ type repoIdentity struct {
 }
 
 // resolveIdentity validates and locates a worktree with one Git process.
-// Submodules are rejected because they are not independent Fossor repositories.
+// Submodules and directories Git does not recognize are rejected because they
+// are not independent Fossor repositories.
 func (g *ExecGit) resolveIdentity(ctx context.Context, path string) (repoIdentity, error) {
 	// The superproject query prints nothing outside a submodule, so it must stay
 	// last for the fixed-position lines before it to remain unambiguous.
 	out, err := g.run(ctx, path, "rev-parse", "--is-inside-work-tree", "--path-format=absolute",
 		"--git-dir", "--git-common-dir", "--show-superproject-working-tree")
 	if err != nil {
-		return repoIdentity{}, err
+		return repoIdentity{}, revParseError(err)
 	}
 	lines := strings.SplitN(out, "\n", 4)
+	if len(lines) >= 2 && !filepath.IsAbs(lines[1]) {
+		// Git before 2.31 echoes the unknown --path-format option instead of failing.
+		return g.resolveIdentityLegacy(ctx, path)
+	}
+	return parseIdentity(lines)
+}
+
+// resolveIdentityLegacy avoids --path-format, resolving the common dir, which
+// older Git prints relative to the worktree, to the same canonical form as
+// --absolute-git-dir so the two remain comparable.
+func (g *ExecGit) resolveIdentityLegacy(ctx context.Context, path string) (repoIdentity, error) {
+	out, err := g.run(ctx, path, "rev-parse", "--is-inside-work-tree", "--absolute-git-dir",
+		"--git-common-dir", "--show-superproject-working-tree")
+	if err != nil {
+		return repoIdentity{}, revParseError(err)
+	}
+	lines := strings.SplitN(out, "\n", 4)
+	if len(lines) >= 3 && !filepath.IsAbs(lines[2]) {
+		lines[2] = filepath.Join(path, lines[2])
+		if resolved, err := filepath.EvalSymlinks(lines[2]); err == nil {
+			lines[2] = resolved
+		}
+	}
+	return parseIdentity(lines)
+}
+
+func parseIdentity(lines []string) (repoIdentity, error) {
 	if len(lines) < 3 || lines[0] != "true" || (len(lines) == 4 && lines[3] != "") {
 		return repoIdentity{}, ErrNotWorktree
 	}
 	return repoIdentity{gitDir: lines[1], commonDir: lines[2]}, nil
+}
+
+// revParseError classifies a directory Git does not recognize, such as an empty
+// or dangling .git, as ErrNotWorktree; other failures remain visible errors.
+func revParseError(err error) error {
+	if strings.Contains(err.Error(), "not a git repository") {
+		return fmt.Errorf("%w: %w", ErrNotWorktree, err)
+	}
+	return err
 }
 
 func (g *ExecGit) commonGitDir(ctx context.Context, path string) (string, error) {
