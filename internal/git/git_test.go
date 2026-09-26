@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +49,45 @@ func TestDetectDefaultBranch(t *testing.T) {
 	branch := g.DetectDefaultBranch(context.Background(), dir)
 	if branch != "main" && branch != "master" {
 		t.Errorf("unexpected default branch: %s", branch)
+	}
+}
+
+func TestDetectDefaultBranchFallbackUsesOneRefQuery(t *testing.T) {
+	dir := setupTestRepo(t)
+	g := NewExecGit()
+	ctx := context.Background()
+	if _, err := g.RunCommand(ctx, dir, "branch", "-M", "master"); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.detectDefaultBranch(ctx, dir, ""); got != "master" {
+		t.Errorf("local fallback = %q, want master", got)
+	}
+	if _, err := g.RunCommand(ctx, dir, "update-ref", "refs/remotes/origin/develop", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RunCommand(ctx, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"); err != nil {
+		t.Fatal(err)
+	}
+	// An empty common dir skips the loose-file fast path.
+	if got := g.detectDefaultBranch(ctx, dir, ""); got != "develop" {
+		t.Errorf("symref fallback = %q, want develop", got)
+	}
+}
+
+func TestGetRepoInfoRejectsSubmodules(t *testing.T) {
+	source := setupTestRepo(t)
+	super := setupTestRepo(t)
+	g := NewExecGit()
+	ctx := context.Background()
+	if _, err := g.RunCommand(ctx, super, "-c", "protocol.file.allow=always", "submodule", "add", source, "vendor/source"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := g.GetRepoInfo(ctx, filepath.Join(super, "vendor", "source"))
+	if !errors.Is(err, ErrNotWorktree) || info.Status != StatusError {
+		t.Errorf("submodule info = %#v, err = %v; want ErrNotWorktree", info, err)
+	}
+	if _, err := g.GetRepoInfo(ctx, super); err != nil {
+		t.Errorf("superproject err = %v, want nil", err)
 	}
 }
 
@@ -416,11 +456,11 @@ func TestTryClearStaleLocksInLinkedWorktree(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("worktree add: %s: %v", out, err)
 	}
-	gitDir, err := NewExecGit().gitDir(context.Background(), linked)
+	identity, err := NewExecGit().resolveIdentity(context.Background(), linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock := filepath.Join(gitDir, "index.lock")
+	lock := filepath.Join(identity.gitDir, "index.lock")
 	if err := os.WriteFile(lock, nil, 0644); err != nil {
 		t.Fatal(err)
 	}
