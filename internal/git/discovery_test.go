@@ -178,6 +178,40 @@ func TestDiscoverNoFetchUsesCachedDefaultBranch(t *testing.T) {
 	}
 }
 
+func TestFindReposStreamsCandidatesAndStopsEarly(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a", "b", filepath.Join("nested", "c")} {
+		if err := os.MkdirAll(filepath.Join(root, name, ".git"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", "c", "d.git"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var all []string
+	if !findRepos(context.Background(), root, true, func(path string) bool {
+		all = append(all, path)
+		return true
+	}) {
+		t.Fatal("complete walk reported stop")
+	}
+	if len(all) != 3 {
+		t.Fatalf("candidates = %v, want a, b and nested/c", all)
+	}
+
+	var seen []string
+	if findRepos(context.Background(), root, true, func(path string) bool {
+		seen = append(seen, path)
+		return false
+	}) {
+		t.Fatal("stopped walk reported completion")
+	}
+	if len(seen) != 1 {
+		t.Fatalf("candidates after stop = %v, want exactly one", seen)
+	}
+}
+
 func TestRefreshRepoUsesRemoteDefaultBranch(t *testing.T) {
 	g := &discoveryTestGit{
 		fetchErr:      make(map[string]error),

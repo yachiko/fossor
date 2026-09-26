@@ -71,17 +71,6 @@ func (g *ExecGit) runRaw(ctx context.Context, path string, args ...string) (stri
 	return runGitRawOnce(ctx, path, args...)
 }
 
-// IsWorktree validates both regular and linked worktrees and rejects
-// submodules, which are intentionally not independent Fossor repositories.
-func (g *ExecGit) IsWorktree(ctx context.Context, path string) bool {
-	inside, err := g.run(ctx, path, "rev-parse", "--is-inside-work-tree")
-	if err != nil || inside != "true" {
-		return false
-	}
-	superproject, err := g.run(ctx, path, "rev-parse", "--show-superproject-working-tree")
-	return err == nil && superproject == ""
-}
-
 func runGitOnce(ctx context.Context, path string, args ...string) (string, error) {
 	out, err := runGitRawOnce(ctx, path, args...)
 	return strings.TrimSpace(out), err

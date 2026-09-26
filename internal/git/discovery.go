@@ -43,7 +43,6 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 
 	go func() {
 		defer close(ch)
-		repoPaths := findRepos(ctx, opts.RootDir, opts.Recursive, opts.Git)
 		paths := make(chan string)
 		var refreshInput chan RepoInfo
 		refreshes := make(chan RepoInfo)
@@ -93,17 +92,19 @@ func Discover(ctx context.Context, opts DiscoveryOptions) <-chan DiscoveryResult
 			}()
 		}
 
-		for _, path := range repoPaths {
-			if !sendPath(ctx, paths, path) {
-				close(paths)
-				localWG.Wait()
-				if opts.Fetch {
-					close(refreshInput)
-					schedulerWG.Wait()
-					fetchWG.Wait()
-				}
-				return
+		// Candidates stream to status workers as the walk finds them; the
+		// workers' first Git call rejects submodules and invalid directories.
+		if !findRepos(ctx, opts.RootDir, opts.Recursive, func(path string) bool {
+			return sendPath(ctx, paths, path)
+		}) {
+			close(paths)
+			localWG.Wait()
+			if opts.Fetch {
+				close(refreshInput)
+				schedulerWG.Wait()
+				fetchWG.Wait()
 			}
+			return
 		}
 		close(paths)
 		localWG.Wait()
@@ -226,20 +227,12 @@ func sendRepo(ctx context.Context, ch chan<- RepoInfo, repo RepoInfo) bool {
 	}
 }
 
-// findRepos returns worktree roots physically within root. A detector validates
-// .git directories and pointer files when the Git implementation supports it.
-func findRepos(ctx context.Context, root string, recursive bool, g Git) []string {
-	var repos []string
-	valid := func(path string) bool {
-		if detector, ok := g.(interface {
-			IsWorktree(context.Context, string) bool
-		}); ok {
-			return detector.IsWorktree(ctx, path)
-		}
-		return true
-	}
-
+// findRepos passes each worktree candidate physically within root to yield
+// as soon as it is found. It inspects only the filesystem: a .git directory or
+// pointer file marks a candidate. It returns false if yield or ctx stopped it.
+func findRepos(ctx context.Context, root string, recursive bool, yield func(string) bool) bool {
 	if recursive {
+		stopped := false
 		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
@@ -248,8 +241,9 @@ func findRepos(ctx context.Context, root string, recursive bool, g Git) []string
 				return ctx.Err()
 			}
 			if d.Name() == ".git" && (d.IsDir() || d.Type().IsRegular()) {
-				if repo := filepath.Dir(path); valid(repo) {
-					repos = append(repos, repo)
+				if !yield(filepath.Dir(path)) {
+					stopped = true
+					return filepath.SkipAll
 				}
 				if d.IsDir() {
 					return filepath.SkipDir
@@ -257,21 +251,23 @@ func findRepos(ctx context.Context, root string, recursive bool, g Git) []string
 			}
 			return nil
 		})
-	} else {
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			return nil
+		return !stopped && ctx.Err() == nil
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return true
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
 		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			gitDir := filepath.Join(root, e.Name(), ".git")
-			if info, err := os.Stat(gitDir); err == nil && (info.IsDir() || info.Mode().IsRegular()) && valid(filepath.Join(root, e.Name())) {
-				repos = append(repos, filepath.Join(root, e.Name()))
+		gitDir := filepath.Join(root, e.Name(), ".git")
+		if info, err := os.Stat(gitDir); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			if !yield(filepath.Join(root, e.Name())) {
+				return false
 			}
 		}
 	}
-
-	return repos
+	return ctx.Err() == nil
 }
