@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -240,30 +241,42 @@ func lockHasHolder(ctx context.Context, lock string) bool {
 }
 
 func (g *ExecGit) DetectDefaultBranch(ctx context.Context, path string) string {
+	commonDir, _ := g.commonGitDir(ctx, path)
+	return g.detectDefaultBranch(ctx, path, commonDir)
+}
+
+// detectDefaultBranch resolves the default branch from an already known common
+// git dir, spawning at most one Git process when the loose symref is absent.
+func (g *ExecGit) detectDefaultBranch(ctx context.Context, path, commonDir string) string {
+	const remotePrefix = "refs/remotes/origin/"
 	// Fast path: read symref file directly from Git's resolved common dir.
-	if commonDir, err := g.commonGitDir(ctx, path); err == nil {
+	if commonDir != "" {
 		if data, err := os.ReadFile(filepath.Join(commonDir, "refs", "remotes", "origin", "HEAD")); err == nil {
 			ref := strings.TrimSpace(string(data))
-			const prefix = "ref: refs/remotes/origin/"
-			if strings.HasPrefix(ref, prefix) {
-				return ref[len(prefix):]
+			if strings.HasPrefix(ref, "ref: "+remotePrefix) {
+				return ref[len("ref: "+remotePrefix):]
 			}
 		}
 	}
 
-	// Fallback: git symbolic-ref (handles packed refs)
-	out, err := g.run(ctx, path, "symbolic-ref", "refs/remotes/origin/HEAD")
+	// Fallback: one ref query covers other ref backends and the common local
+	// branch names, including packed refs and linked worktrees.
+	out, err := g.run(ctx, path, "for-each-ref", "--format=%(refname)%00%(symref)",
+		"refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master")
 	if err == nil {
-		const prefix = "refs/remotes/origin/"
-		if strings.HasPrefix(out, prefix) {
-			return out[len(prefix):]
+		refs := make(map[string]string)
+		for _, line := range strings.Split(out, "\n") {
+			if name, target, ok := strings.Cut(line, "\x00"); ok {
+				refs[name] = target
+			}
 		}
-	}
-
-	// Check common branch names through Git so packed refs and linked worktrees work.
-	for _, name := range []string{"main", "master"} {
-		if _, err := g.run(ctx, path, "show-ref", "--verify", "--quiet", "refs/heads/"+name); err == nil {
-			return name
+		if target := refs["refs/remotes/origin/HEAD"]; strings.HasPrefix(target, remotePrefix) {
+			return target[len(remotePrefix):]
+		}
+		for _, name := range []string{"main", "master"} {
+			if _, ok := refs["refs/heads/"+name]; ok {
+				return name
+			}
 		}
 	}
 
@@ -497,12 +510,28 @@ func (g *ExecGit) getSubmodulePaths(ctx context.Context, repoPath string) map[st
 	return paths
 }
 
+// ErrNotWorktree reports a path that Git does not treat as an independent
+// worktree, such as a submodule checkout.
+var ErrNotWorktree = errors.New("not an independent git worktree")
+
 func (g *ExecGit) GetRepoInfo(ctx context.Context, path string) (RepoInfo, error) {
 	name := pathBaseName(path)
 	info := RepoInfo{
 		Name: name,
 		Path: path,
 	}
+
+	identity, err := g.resolveIdentity(ctx, path)
+	if err != nil {
+		info.Status = StatusError
+		info.Error = fmt.Errorf("resolve repository: %w", err)
+		if errors.Is(err, ErrNotWorktree) {
+			return info, err
+		}
+		return info, nil
+	}
+	info.CommonGitDir = identity.commonDir
+	info.LinkedWorktree = filepath.Clean(identity.gitDir) != filepath.Clean(identity.commonDir)
 
 	// Single command replaces GetBranch + GetAheadBehind + GetChanges
 	si, err := g.getStatusInfo(ctx, path)
@@ -516,24 +545,35 @@ func (g *ExecGit) GetRepoInfo(ctx context.Context, path string) (RepoInfo, error
 	info.Behind = si.behind
 	info.Changes = si.changes
 
-	info.DefaultBranch = g.DetectDefaultBranch(ctx, path)
-	if commonDir, err := g.commonGitDir(ctx, path); err == nil {
-		info.CommonGitDir = commonDir
-		if gitDir, err := g.gitDir(ctx, path); err == nil {
-			info.LinkedWorktree = filepath.Clean(gitDir) != filepath.Clean(commonDir)
-		}
-	}
-
+	info.DefaultBranch = g.detectDefaultBranch(ctx, path, identity.commonDir)
 	info.Status = computeStatus(info)
 	return info, nil
 }
 
-func (g *ExecGit) commonGitDir(ctx context.Context, path string) (string, error) {
-	return g.run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+type repoIdentity struct {
+	gitDir    string
+	commonDir string
 }
 
-func (g *ExecGit) gitDir(ctx context.Context, path string) (string, error) {
-	return g.run(ctx, path, "rev-parse", "--path-format=absolute", "--git-dir")
+// resolveIdentity validates and locates a worktree with one Git process.
+// Submodules are rejected because they are not independent Fossor repositories.
+func (g *ExecGit) resolveIdentity(ctx context.Context, path string) (repoIdentity, error) {
+	// The superproject query prints nothing outside a submodule, so it must stay
+	// last for the fixed-position lines before it to remain unambiguous.
+	out, err := g.run(ctx, path, "rev-parse", "--is-inside-work-tree", "--path-format=absolute",
+		"--git-dir", "--git-common-dir", "--show-superproject-working-tree")
+	if err != nil {
+		return repoIdentity{}, err
+	}
+	lines := strings.SplitN(out, "\n", 4)
+	if len(lines) < 3 || lines[0] != "true" || (len(lines) == 4 && lines[3] != "") {
+		return repoIdentity{}, ErrNotWorktree
+	}
+	return repoIdentity{gitDir: lines[1], commonDir: lines[2]}, nil
+}
+
+func (g *ExecGit) commonGitDir(ctx context.Context, path string) (string, error) {
+	return g.run(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 }
 
 // getStatusInfo runs a single git command to get branch, ahead/behind, and change count.
