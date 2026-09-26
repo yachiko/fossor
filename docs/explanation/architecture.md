@@ -6,7 +6,7 @@ High-level flow (happy path):
 
 1. `cmd.Execute()` resolves the root directory and constructs the `ui.App` Bubble Tea model.
 2. `App.Init()` starts the discovery pipeline in a goroutine, kicks the spinner, and (unless `--no-auto-refresh`) schedules the 30-second refresh tick.
-3. Discovery walks the selected directory, validates Git worktrees (including linked worktrees), excludes submodules, fans out `git` invocations per checkout, and streams `RepoDiscoveredMsg` back through a Bubble Tea command.
+3. Discovery walks the selected directory, streams each `.git` candidate to local status workers as it is found, excludes submodules, and streams `RepoDiscoveredMsg` back through a Bubble Tea command.
 4. Each message lands in `App.Update`, which forwards to `mainscreen.UpdateRepo` to grow the table live.
 5. The user navigates with the keybindings; pressing `Enter` constructs a `manageview.Model` and switches screens.
 6. The manage view loads commits / stash / branches lazily as tabs are entered, and renders the Status tab from `git status --porcelain` + `git diff` output.
@@ -46,18 +46,22 @@ Cross-screen state flows through messages in `internal/ui/common/messages.go`:
 `internal/git/discovery.go`:
 
 ```
-Walk directory ──► per-repo goroutine ──► channel ──► tea.Msg
-                  (parallelism = NumCPU)
+Walk directory ──► local status workers (8) ──► channel ──► tea.Msg
+  (filesystem only)          │
+                             └──► fetch workers (16) ──► channel ──► tea.Msg
 ```
 
-Each goroutine constructs a `RepoInfo` by calling `Git.GetRepoInfo`, which under the hood runs:
+The walk inspects only the filesystem; a `.git` directory or pointer file marks a candidate, which is handed to a worker immediately. Each local worker calls `Git.GetRepoInfo`, which runs:
 
-- `git rev-parse --abbrev-ref HEAD` (branch)
-- `git remote get-url origin` (remote URL)
-- Optional `git fetch` (skipped with `--no-fetch`)
-- After a successful fetch, `git ls-remote --symref origin HEAD` refreshes the cached default branch
-- `git rev-list --left-right --count` (ahead/behind)
-- `git status --porcelain=v1` (changes)
+- `git rev-parse --is-inside-work-tree --path-format=absolute --git-dir --git-common-dir --show-superproject-working-tree` (validation, submodule rejection and worktree identity in one process)
+- `git status --porcelain=v2 --branch` (branch, ahead/behind, changes)
+- Default branch from the loose `refs/remotes/origin/HEAD` file, falling back to a single `git for-each-ref` query
+
+Unless `--no-fetch` is used, each local result is then queued for a fetch worker, which runs:
+
+- `git fetch --prune`
+- `git status --porcelain=v2 --branch` via `Git.RefreshStatus` (identity and default branch are retained)
+- `git ls-remote --symref origin HEAD` only when the default branch has not been confirmed against the remote in the last 24 hours
 
 The Tea `Cmd` that wraps the channel is re-issued on every received message, so the UI streams one repo per turn until the channel closes.
 
@@ -80,7 +84,7 @@ Inside the `git` wrapper, every command is run through `runGitOnce`. On failure,
 
 Fossor has no configuration file. It stores the last complete, non-cancelled discovery snapshot in `~/.cache/fossor/repositories.json`, keyed by absolute root and recursive mode. The versioned JSON file is private and atomically replaced. Read and write failures are ignored, so the cache never prevents startup or discovery.
 
-Cached rows are hydrated synchronously as unverified and change to checking only while their live refresh runs. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents include resolved common-Git-dir identity so linked worktrees can be grouped immediately; remote state is always refreshed by the live scan unless `--no-fetch` is used.
+Cached rows are hydrated synchronously as unverified and change to checking only while their live refresh runs. They are replaced progressively. A completed scan replaces the scoped snapshot, removing repositories that no longer exist. Cache contents include resolved common-Git-dir identity so linked worktrees can be grouped immediately, and the time the default branch was last confirmed against the remote; remote state is always refreshed by the live scan unless `--no-fetch` is used.
 
 ## See Also
 

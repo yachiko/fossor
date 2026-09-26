@@ -35,10 +35,8 @@ This ordering drives the header summary line on the main screen and the `t` filt
 
 ## How the Status Is Computed
 
-- **Branch detection**: `git rev-parse --abbrev-ref HEAD`.
-- **Default branch detection**: from `refs/remotes/origin/HEAD`; falls back to `main`, then `master`.
-- **Ahead / behind**: `git rev-list --left-right --count <default>...<current>`.
-- **Changes**: count of porcelain entries from `git status --porcelain=v1`.
+- **Branch, ahead / behind, changes**: one `git status --porcelain=v2 --branch`; ahead / behind compare against the branch's upstream.
+- **Default branch detection**: from `refs/remotes/origin/HEAD`; falls back to `main`, then `master`. After a successful fetch, discovery confirms it with `git ls-remote --symref origin HEAD` at most once every 24 hours.
 
 If `--no-fetch` is passed, remote refs are not refreshed before this computation; `Ahead` / `Behind` will reflect the last fetch.
 
