@@ -633,11 +633,23 @@ func parseIdentity(lines []string) (repoIdentity, error) {
 	return repoIdentity{gitDir: lines[1], commonDir: lines[2]}, nil
 }
 
+// notWorktreeMessages are the rev-parse failures that mean Git does not
+// recognize the directory. Git 2.56 reports a .git file pointing at a missing
+// directory as "gitfile does not point to a valid repository" where earlier
+// versions said "not a git repository".
+var notWorktreeMessages = []string{
+	"not a git repository",
+	"gitfile does not point to a valid repository",
+}
+
 // revParseError classifies a directory Git does not recognize, such as an empty
 // or dangling .git, as ErrNotWorktree; other failures remain visible errors.
 func revParseError(err error) error {
-	if strings.Contains(err.Error(), "not a git repository") {
-		return fmt.Errorf("%w: %w", ErrNotWorktree, err)
+	msg := err.Error()
+	for _, m := range notWorktreeMessages {
+		if strings.Contains(msg, m) {
+			return fmt.Errorf("%w: %w", ErrNotWorktree, err)
+		}
 	}
 	return err
 }
