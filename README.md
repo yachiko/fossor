@@ -3,6 +3,10 @@
 </p>
 
 <h1 align="center">Fossor</h1>
+<table align="center"><tr><td>
+<strong>fossor</strong> · <em>Latin, noun</em><br>
+a digger, one who works the ground with a spade.
+</td></tr></table>
 <p align="center"><strong>A terminal UI for managing multiple Git repositories from a single screen.
 </strong></p>
 
